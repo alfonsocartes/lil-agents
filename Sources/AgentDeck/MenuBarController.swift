@@ -1,0 +1,160 @@
+import AppKit
+import Combine
+
+/// The menu bar presence for lil agents: a status item whose icon color reflects
+/// whether any session is waiting for the user, plus a menu listing the sessions
+/// and controls for the floating overlay.
+///
+/// Icon states:
+///   • none      — nothing needs you: a monochrome (template) outline that adapts
+///                 to the menu bar appearance.
+///   • waiting   — a session finished its turn and awaits your prompt: blue dot.
+///   • approval  — a session is blocked on a permission prompt: orange alert.
+@MainActor
+final class MenuBarController: NSObject, NSMenuDelegate {
+    private let store: SessionStore
+    private let awake: StayAwakeController
+    private let onToggleOverlay: () -> Void
+    private let isOverlayVisible: () -> Bool
+
+    private let statusItem: NSStatusItem
+    private var cancellables = Set<AnyCancellable>()
+
+    init(store: SessionStore,
+         awake: StayAwakeController,
+         onToggleOverlay: @escaping () -> Void,
+         isOverlayVisible: @escaping () -> Bool) {
+        self.store = store
+        self.awake = awake
+        self.onToggleOverlay = onToggleOverlay
+        self.isOverlayVisible = isOverlayVisible
+        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        super.init()
+
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
+
+        updateIcon()
+        // Re-render the icon when sessions change OR when stay-awake toggles.
+        store.$sessions
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateIcon() }
+            .store(in: &cancellables)
+        awake.$isAwake
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateIcon() }
+            .store(in: &cancellables)
+    }
+
+    // MARK: - Icon
+
+    private func updateIcon() {
+        guard let button = statusItem.button else { return }
+
+        // Stay-awake ON → bolt glyph (keeping the traffic-light color); otherwise
+        // the normal per-attention status symbol.
+        let symbol = awake.isAwake ? "bolt.fill" : store.attention.symbolName
+        let color = store.attention.tint
+
+        let base = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+        if let color {
+            let tinted = base.applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "lil agents")?
+                .withSymbolConfiguration(tinted)
+            image?.isTemplate = false
+            button.image = image
+        } else {
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "lil agents")?
+                .withSymbolConfiguration(base)
+            image?.isTemplate = true   // adapt to light/dark menu bar
+            button.image = image
+        }
+        button.toolTip = tooltip()
+    }
+
+    private func tooltip() -> String {
+        let n = store.sessions.count
+        if n == 0 { return "lil agents — no active sessions" }
+        switch store.attention {
+        case .needsInput: return "lil agents — a session needs your input"
+        case .idle:       return "lil agents — a session is idle"
+        case .working:    return "lil agents — \(n) working"
+        case .none:       return "lil agents — no active sessions"
+        }
+    }
+
+    // MARK: - Menu
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        // Hide/Show overlay up top for discoverability. Show the ⌥⌘J shortcut as
+        // plain text rather than a real key equivalent — the global Carbon hotkey
+        // already handles ⌥⌘J, and a functional key equivalent here would fire a
+        // SECOND toggle whenever this menu is open.
+        let toggleTop = NSMenuItem(
+            title: (isOverlayVisible() ? "Hide overlay" : "Show overlay") + "   ⌥⌘J",
+            action: #selector(toggleOverlay),
+            keyEquivalent: ""
+        )
+        toggleTop.target = self
+        menu.addItem(toggleTop)
+        menu.addItem(.separator())
+
+        if store.sessions.isEmpty {
+            let empty = NSMenuItem(title: "No active sessions", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        } else {
+            for session in store.sessions {
+                let item = NSMenuItem(
+                    title: "\(dot(for: session.status))  \(session.label)",
+                    action: #selector(jump(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = session   // struct is boxed into Any?
+                menu.addItem(item)
+            }
+        }
+
+        menu.addItem(.separator())
+
+        let stayAwake = NSMenuItem(
+            title: "Stay awake (lid closed)",
+            action: #selector(toggleAwake),
+            keyEquivalent: ""
+        )
+        stayAwake.target = self
+        stayAwake.state = awake.isAwake ? .on : .off
+        menu.addItem(stayAwake)
+
+        menu.addItem(.separator())
+
+        let quit = NSMenuItem(title: "Quit lil agents", action: #selector(quit), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+    }
+
+    @objc private func jump(_ sender: NSMenuItem) {
+        guard let session = sender.representedObject as? Session else { return }
+        ITermJumper.jump(tty: session.tty, cwd: session.cwd)
+    }
+
+    @objc private func toggleOverlay() { onToggleOverlay() }
+
+    @objc private func toggleAwake() { awake.toggle() }
+
+    @objc private func quit() { NSApp.terminate(nil) }
+
+    // MARK: - Helpers
+
+    private func dot(for status: SessionStatus) -> String {
+        switch status {
+        case .working:         return "🟢"
+        case .idle:            return "🟡"
+        case .waitingApproval: return "🔴"
+        }
+    }
+}

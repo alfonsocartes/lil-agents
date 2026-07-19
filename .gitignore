@@ -1,0 +1,12 @@
+# Swift Package Manager build products
+.build/
+
+# Assembled app bundle (build artifact)
+dist/
+
+# macOS
+.DS_Store
+
+# Xcode user state (in case the project is opened in Xcode)
+*.xcuserstate
+xcuserdata/

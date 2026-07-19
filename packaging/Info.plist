@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>lil agents</string>
+    <key>CFBundleDisplayName</key>
+    <string>lil agents</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.agentdeck.app</string>
+    <key>CFBundleExecutable</key>
+    <string>AgentDeck</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <!-- Menu-bar-less / Dock-less agent app: the only surface is the floating overlay. -->
+    <key>LSUIElement</key>
+    <true/>
+    <!-- Shown on the one-time Automation prompt when jumping to an iTerm2 pane. -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>AgentDeck brings the matching iTerm2 tab to the front when you click a session.</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>AgentDeck</string>
+</dict>
+</plist>
