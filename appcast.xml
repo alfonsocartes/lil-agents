@@ -32,5 +32,18 @@
           sparkle:edSignature="..." />
       </item>
     -->
+    <item>
+      <title>0.2.0</title>
+      <pubDate>Sun, 19 Jul 2026 16:04:26 +0000</pubDate>
+      <sparkle:version>4</sparkle:version>
+      <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure
+        url="https://github.com/alfonsocartes/lil-agents/releases/download/v0.2.0/lil-agents-0.2.0.zip"
+        length="3293448"
+        type="application/octet-stream"
+        sparkle:edSignature="JfHP5rPYrBXAA9G3oC1OwKF6MGend8n6CEKL4OvZLC4vniiI952yGUaGPUZWPv3zEwDRIZTaPZof5J4mAm5EDA==" />
+    </item>
+
   </channel>
 </rss>
