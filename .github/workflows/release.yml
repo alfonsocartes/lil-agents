@@ -39,7 +39,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
       - name: Checkout (full history)
@@ -55,6 +55,16 @@ jobs:
         run: |
           echo "raw_ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Package.swift requires Swift 6 tools (.swiftLanguageMode(.v5)); the image
+      # default can be older, so select the newest installed Xcode explicitly.
+      - name: Select latest Xcode
+        run: |
+          set -euo pipefail
+          LATEST="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          echo "Selecting $LATEST"
+          sudo xcode-select -s "$LATEST/Contents/Developer"
+          swift --version
 
       # -----------------------------------------------------------------
       # Import the Developer ID certificate into a temporary, throwaway
