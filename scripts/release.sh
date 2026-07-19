@@ -161,7 +161,14 @@ xcrun stapler validate "$DIST/$DMG_NAME"
 # 6. Sign the Sparkle update archive and emit the appcast fragment
 # ---------------------------------------------------------------------------
 echo "==> Signing update archive with Sparkle EdDSA key"
-SIGN_OUTPUT="$("$SIGN_UPDATE" -s "$SPARKLE_PRIVATE_KEY" "$DIST/$ZIP_NAME")"
+# Sparkle 2.9+ removed the `-s <key>` argument ("no longer supported"); the key
+# must be supplied via a file with --ed-key-file. Write it to a private temp
+# file and remove it on exit.
+SPARKLE_KEY_FILE="$(mktemp)"
+trap 'rm -f "$SPARKLE_KEY_FILE"' EXIT
+printf '%s' "$SPARKLE_PRIVATE_KEY" > "$SPARKLE_KEY_FILE"
+SIGN_OUTPUT="$("$SIGN_UPDATE" --ed-key-file "$SPARKLE_KEY_FILE" "$DIST/$ZIP_NAME")"
+rm -f "$SPARKLE_KEY_FILE"; trap - EXIT
 echo "$SIGN_OUTPUT"
 
 # sign_update prints: sparkle:edSignature="..." length="..."
