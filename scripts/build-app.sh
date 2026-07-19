@@ -22,15 +22,42 @@ fi
 
 echo "==> Assembling $APP"
 rm -rf "$APP_DIR"
-mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$APP_DIR/Contents/Frameworks"
 cp "$BIN" "$APP_DIR/Contents/MacOS/AgentDeck"
 cp "$ROOT/packaging/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$ROOT/packaging/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
+echo "==> Embedding Sparkle.framework"
+SPARKLE_FRAMEWORK="$(find .build -path '*macos-arm64_x86_64/Sparkle.framework' -type d | head -1)"
+if [[ -z "$SPARKLE_FRAMEWORK" ]]; then
+    echo "error: Sparkle.framework not found under .build — did swift build fetch dependencies?" >&2
+    exit 1
+fi
+cp -R "$SPARKLE_FRAMEWORK" "$APP_DIR/Contents/Frameworks/Sparkle.framework"
+
+EXECUTABLE="$APP_DIR/Contents/MacOS/AgentDeck"
+if ! otool -l "$EXECUTABLE" | grep -q LC_RPATH; then
+    echo "==> LC_RPATH missing — adding @executable_path/../Frameworks"
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$EXECUTABLE"
+fi
+
 # Ad-hoc code signature gives the app a stable identity so macOS TCC
-# (Automation / admin) grants persist across launches.
+# (Automation / admin) grants persist across launches. Sign inner→outer
+# (no --deep) so each nested bundle gets its own valid signature before the
+# outer .app is sealed over it.
 echo "==> Ad-hoc signing"
-codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || \
+SPARKLE_DIR="$APP_DIR/Contents/Frameworks/Sparkle.framework"
+codesign --force --sign - "$SPARKLE_DIR/Versions/B/XPCServices/Installer.xpc" >/dev/null 2>&1 || \
+    echo "warning: ad-hoc codesign failed for Installer.xpc"
+codesign --force --sign - "$SPARKLE_DIR/Versions/B/XPCServices/Downloader.xpc" >/dev/null 2>&1 || \
+    echo "warning: ad-hoc codesign failed for Downloader.xpc"
+codesign --force --sign - "$SPARKLE_DIR/Versions/B/Autoupdate" >/dev/null 2>&1 || \
+    echo "warning: ad-hoc codesign failed for Autoupdate"
+codesign --force --sign - "$SPARKLE_DIR/Versions/B/Updater.app" >/dev/null 2>&1 || \
+    echo "warning: ad-hoc codesign failed for Updater.app"
+codesign --force --sign - "$SPARKLE_DIR" >/dev/null 2>&1 || \
+    echo "warning: ad-hoc codesign failed for Sparkle.framework"
+codesign --force --sign - "$APP_DIR" >/dev/null 2>&1 || \
     echo "warning: ad-hoc codesign failed (app will still run, but TCC grants may not persist)"
 
 echo "==> Done: $APP_DIR"

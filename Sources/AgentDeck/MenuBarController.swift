@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Sparkle
 
 /// The menu bar presence for lil agents: a status item whose icon color reflects
 /// whether any session is waiting for the user, plus a menu listing the sessions
@@ -14,6 +15,7 @@ import Combine
 final class MenuBarController: NSObject, NSMenuDelegate {
     private let store: SessionStore
     private let awake: StayAwakeController
+    private let updaterController: SPUStandardUpdaterController
     private let onToggleOverlay: () -> Void
     private let isOverlayVisible: () -> Bool
 
@@ -22,10 +24,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     init(store: SessionStore,
          awake: StayAwakeController,
+         updaterController: SPUStandardUpdaterController,
          onToggleOverlay: @escaping () -> Void,
          isOverlayVisible: @escaping () -> Bool) {
         self.store = store
         self.awake = awake
+        self.updaterController = updaterController
         self.onToggleOverlay = onToggleOverlay
         self.isOverlayVisible = isOverlayVisible
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -132,6 +136,28 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        // Sparkle enables/disables this item automatically based on update-check
+        // state, so no explicit `isEnabled` handling is needed here.
+        let checkForUpdates = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        checkForUpdates.target = updaterController
+        menu.addItem(checkForUpdates)
+
+        menu.addItem(.separator())
+
+        let uninstall = NSMenuItem(
+            title: "Uninstall lil agents…",
+            action: #selector(uninstall(_:)),
+            keyEquivalent: ""
+        )
+        uninstall.target = self
+        menu.addItem(uninstall)
+
+        menu.addItem(.separator())
+
         let quit = NSMenuItem(title: "Quit lil agents", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -145,6 +171,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func toggleOverlay() { onToggleOverlay() }
 
     @objc private func toggleAwake() { awake.toggle() }
+
+    @objc private func uninstall(_ sender: NSMenuItem) { Uninstaller.promptAndUninstall() }
 
     @objc private func quit() { NSApp.terminate(nil) }
 

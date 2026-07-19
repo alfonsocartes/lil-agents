@@ -1,0 +1,148 @@
+# Release workflow for "lil agents".
+#
+# Triggered by pushing a tag matching "v*" (e.g. "v0.2.0"). Builds the app,
+# re-signs it with a Developer ID certificate, notarizes + staples it, packages
+# the Sparkle update .zip and the first-download .dmg, updates appcast.xml at
+# the repo root (which the app polls from raw.githubusercontent.com on main),
+# and publishes a GitHub Release with both artifacts attached.
+#
+# ---------------------------------------------------------------------------
+# Required repository secrets:
+#
+#   MACOS_CERTIFICATE_P12       Base64-encoded .p12 export of the "Developer ID
+#                                 Application" signing certificate (+ private key).
+#   MACOS_CERTIFICATE_PASSWORD   Password the .p12 was exported with.
+#   APPLE_DEVELOPER_ID            The signing identity string, exactly as it
+#                                 appears in the keychain, e.g.
+#                                 "Developer ID Application: Your Name (TEAMID)".
+#   APPLE_ID                      Apple ID email used for notarization.
+#   APPLE_TEAM_ID                 10-character Apple Developer Team ID.
+#   APPLE_APP_PASSWORD            App-specific password for notarytool
+#                                 (NOT the Apple ID account password).
+#   SPARKLE_PRIVATE_KEY           Sparkle EdDSA private key (base64, from
+#                                 `generate_keys`) used to sign the update archive.
+#
+#   GITHUB_TOKEN is provided automatically by Actions and is used to push the
+#   updated appcast.xml back to main and to create the release; no setup needed
+#   beyond the `permissions: contents: write` below.
+# ---------------------------------------------------------------------------
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Default GITHUB_TOKEN checkout — we push back to main later using
+          # this same token, so keep credentials persisted.
+          persist-credentials: true
+
+      - name: Derive version from tag
+        id: version
+        run: |
+          echo "raw_ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------
+      # Import the Developer ID certificate into a temporary, throwaway
+      # keychain scoped to this job. Standard GitHub Actions macOS signing
+      # dance: decode the .p12, create a keychain with a random password,
+      # import the cert, then allow codesign to use it without prompting.
+      # -----------------------------------------------------------------
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          KEYCHAIN_PATH="$RUNNER_TEMP/release-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode -o "$CERTIFICATE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERTIFICATE_PATH" -k "$KEYCHAIN_PATH" -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Make this keychain visible to codesign alongside the default list.
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed 's/"//g')
+
+          rm -f "$CERTIFICATE_PATH"
+
+      - name: Run release script (build, sign, notarize, package)
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/release.sh "$RELEASE_VERSION"
+
+      # -----------------------------------------------------------------
+      # Update appcast.xml with the new <item>, then commit + push to main.
+      # Required because SUFeedURL points at raw.githubusercontent.com/main.
+      # -----------------------------------------------------------------
+      - name: Update appcast.xml
+        id: appcast
+        run: |
+          set -euo pipefail
+
+          FRAGMENT="dist/appcast-fragment.txt"
+          # shellcheck source=/dev/null
+          source "$FRAGMENT"
+
+          export VERSION BUILD_NUMBER LENGTH ED_SIGNATURE
+          export PUB_DATE="$(date -u +"%a, %d %b %Y %H:%M:%S +0000")"
+          export DOWNLOAD_URL="https://github.com/alfonsocartes/lil-agents/releases/download/v${VERSION}/${ZIP_NAME}"
+
+          python3 scripts/update-appcast.py
+          xmllint --noout appcast.xml
+
+      - name: Commit and push appcast.xml
+        env:
+          RAW_REF: ${{ steps.version.outputs.raw_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          if git diff --cached --quiet; then
+            echo "No appcast changes to commit."
+          else
+            git commit -m "chore: update appcast for $RAW_REF"
+            git push origin HEAD:main
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RAW_REF: ${{ steps.version.outputs.raw_ref }}
+        run: |
+          set -euo pipefail
+          gh release create "$RAW_REF" \
+            "dist/lil-agents-${RELEASE_VERSION}.zip" \
+            "dist/lil-agents-${RELEASE_VERSION}.dmg" \
+            --title "lil agents ${RELEASE_VERSION}" \
+            --generate-notes

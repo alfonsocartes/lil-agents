@@ -10,13 +10,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var listener: EventListener?
     private var panel: NSPanel?
     private var menuBar: MenuBarController?
+    private var updater: UpdaterController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Ensure our support dir exists.
         try? FileManager.default.createDirectory(at: AgentDeck.supportDir, withIntermediateDirectories: true)
 
+        // Ensure the per-install bearer token exists BEFORE the listener binds,
+        // regardless of the AGENTDECK_NO_INSTALL path below — the listener
+        // requires it on every request.
+        let token = AgentDeck.loadOrCreateToken()
+
         // Start the event listener.
-        let listener = EventListener(store: store)
+        let listener = EventListener(store: store, token: token)
         listener.start()
         self.listener = listener
 
@@ -44,11 +50,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.orderFrontRegardless()
         self.panel = panel
 
+        // Sparkle auto-updater. Retained for the app's lifetime; its controller
+        // is handed to MenuBarController for the "Check for Updates…" item.
+        let updater = UpdaterController()
+        self.updater = updater
+
         // Menu bar presence: color-changing icon + session menu. Kept alongside
         // the floating overlay (the user wants both surfaces).
         menuBar = MenuBarController(
             store: store,
             awake: awake,
+            updaterController: updater.controller,
             onToggleOverlay: { [weak self] in self?.toggleOverlay() },
             isOverlayVisible: { [weak self] in self?.panel?.isVisible ?? false }
         )

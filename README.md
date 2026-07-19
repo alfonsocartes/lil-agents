@@ -77,9 +77,27 @@ Existing hooks from other tools and plugins are preserved — the installer only
 - **[iTerm2](https://iterm2.com/)** for click-to-jump (matches sessions by TTY)
 - **Claude Code** and/or **Codex CLI** installed — whichever agents you want to monitor
 
+## Download & Install
+
+The easiest way to get `lil agents` is a signed, notarized build from the [Releases page](https://github.com/alfonsocartes/lil-agents/releases):
+
+1. Download the latest `lil-agents-<version>.dmg`.
+2. Open the `.dmg` and drag **lil agents.app** onto the **Applications** shortcut.
+3. Launch it from Applications (or Spotlight).
+
+Releases are signed with a Developer ID certificate and notarized by Apple, so macOS Gatekeeper opens it right up — no "unidentified developer" warning, no need to right-click → Open.
+
+`lil agents` has no Dock icon and no main window; look for it in the **menu bar**.
+
+## Updating
+
+`lil agents` checks for updates automatically in the background via [Sparkle](https://sparkle-project.org/) and will prompt you when a new version is ready to install.
+
+To check manually: menu bar → **Check for Updates…**
+
 ## Install & build
 
-Clone and build the `.app` with the included script:
+To build from source instead of downloading a release, clone and build the `.app` with the included script:
 
 ```bash
 git clone https://github.com/<your-org>/lil-agents.git
@@ -121,13 +139,44 @@ Status at a glance:
 - **No telemetry.** Nothing leaves your machine. There is no analytics, no account, no cloud.
 - **Non-destructive config edits.** Existing hooks are backed up and merged; uninstall removes only what `lil agents` added.
 
-## Uninstall
+## Uninstalling
 
-Use the app's uninstall action (removes its hook entries from both CLI config files and deletes the generated forwarder scripts), then delete `dist/lil agents.app`.
+Menu bar → **Uninstall lil agents…**
+
+This removes everything `lil agents` added to your system:
+
+- Its hook entries from `~/.claude/settings.json` and `~/.codex/hooks.json` (existing entries from other tools are left untouched)
+- The generated forwarder scripts
+- The **stay awake (lid closed)** `sudoers` rule, if it was ever enabled
+- Its other support files (logs, generated config, etc.)
+
+It then reveals **lil agents.app** in Finder so you can drag it to the Trash yourself — the uninstaller never deletes the app bundle for you.
 
 ## Tech stack
 
-Swift 6 · SwiftUI · AppKit · Network.framework (embedded loopback listener) · Carbon global hotkey · AppleScript/osascript (iTerm2 automation) · SwiftPM.
+Swift 6 · SwiftUI · AppKit · Network.framework (embedded loopback listener) · Carbon global hotkey · AppleScript/osascript (iTerm2 automation) · Sparkle (auto-updates) · SwiftPM.
+
+## Releasing (maintainer)
+
+Releases are fully automated by [`.github/workflows/release.yml`](.github/workflows/release.yml):
+
+1. Push a tag matching `vX.Y.Z` (e.g. `v0.2.0`) to `main`.
+2. The workflow builds the app, re-signs it with a Developer ID certificate, notarizes and staples it, packages `lil-agents-<version>.zip` (the Sparkle update archive) and `lil-agents-<version>.dmg` (the first-download disk image), updates `appcast.xml` with the new release entry and pushes it back to `main`, and publishes a GitHub Release with both artifacts attached.
+3. Existing installs pick up the update automatically the next time Sparkle checks the feed.
+
+The workflow needs the following repository secrets configured under **Settings → Secrets and variables → Actions**:
+
+| Secret | Purpose |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12` | Base64-encoded `.p12` export of the Developer ID Application certificate + private key |
+| `MACOS_CERTIFICATE_PASSWORD` | Password the `.p12` was exported with |
+| `APPLE_DEVELOPER_ID` | Signing identity string, e.g. `Developer ID Application: Your Name (TEAMID)` |
+| `APPLE_ID` | Apple ID email used for notarization |
+| `APPLE_TEAM_ID` | 10-character Apple Developer Team ID |
+| `APPLE_APP_PASSWORD` | App-specific password for `notarytool` (not your Apple ID password) |
+| `SPARKLE_PRIVATE_KEY` | Sparkle EdDSA private key (base64, from `generate_keys`) used to sign update archives |
+
+`GITHUB_TOKEN` is supplied automatically by Actions and is used to push the appcast update and create the release.
 
 ## Roadmap ideas
 

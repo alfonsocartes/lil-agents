@@ -211,13 +211,27 @@ final class StayAwakeController: ObservableObject {
     /// the file with `visudo -cf` before installing it, and sets 440 perms.
     private func installSudoers() async -> Bool {
         lastMessage = "Requesting admin permission (one-time) to control sleep without a password prompt…"
-        let script = Self.buildAdminInstallAppleScript()
+        guard let script = Self.buildAdminInstallAppleScript() else {
+            lastMessage = "Couldn't set up admin access — unexpected system username."
+            return false
+        }
         let result = await runProcessAsync("/usr/bin/osascript", ["-e", script])
         return result.status == 0
     }
 
-    private static func buildAdminInstallAppleScript() -> String {
+    /// Returns `nil` (aborting the install) if `NSUserName()` doesn't look like
+    /// a normal macOS short name. `username` is spliced, unescaped, into a root
+    /// `do shell script`; real macOS short names can't contain a `'` or newline
+    /// and `visudo -cf` would also reject a malformed line before it's ever
+    /// installed, so this isn't believed to be practically exploitable — but we
+    /// validate before building the command anyway, as defense in depth, rather
+    /// than relying solely on that downstream check.
+    private static func buildAdminInstallAppleScript() -> String? {
         let username = NSUserName()
+        guard username.range(of: "^[A-Za-z_][A-Za-z0-9_-]*$", options: .regularExpression) != nil else {
+            NSLog("AgentDeck: refusing to install sudoers rule — unexpected system username \"\(username)\"")
+            return nil
+        }
         let sudoersLine = "\(username) ALL=(root) NOPASSWD: \(pmsetPath) -a disablesleep 0, \(pmsetPath) -a disablesleep 1"
         // Write to a temp file, validate with visudo before installing anywhere,
         // then move into place with root ownership and 440 perms. Every step

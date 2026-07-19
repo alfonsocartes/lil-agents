@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sparkle appcast for "lil agents".
+
+  Polled by the app at:
+    https://raw.githubusercontent.com/alfonsocartes/lil-agents/main/appcast.xml
+
+  This file is updated automatically by .github/workflows/release.yml on every
+  pushed "v*" tag: it appends a new <item> for the release (with the Sparkle
+  EdDSA signature + archive length produced by scripts/release.sh) and commits
+  it back to main. Do not hand-edit items unless fixing a bad release entry.
+-->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>lil agents</title>
+    <link>https://raw.githubusercontent.com/alfonsocartes/lil-agents/main/appcast.xml</link>
+    <description>Update feed for lil agents.</description>
+    <language>en</language>
+    <!--
+      Items are appended here by the release workflow, most recent first, e.g.:
+
+      <item>
+        <title>0.2.0</title>
+        <pubDate>Sun, 19 Jul 2026 00:00:00 +0000</pubDate>
+        <sparkle:version>123</sparkle:version>
+        <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+        <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+        <enclosure
+          url="https://github.com/alfonsocartes/lil-agents/releases/download/v0.2.0/lil-agents-0.2.0.zip"
+          length="1234567"
+          type="application/octet-stream"
+          sparkle:edSignature="..." />
+      </item>
+    -->
+  </channel>
+</rss>
