@@ -7,10 +7,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SessionStore()
     private let awake = StayAwakeController()
     private let hotKeys = HotKeyCenter()
+    private let settings = AppSettings()
     private var listener: EventListener?
     private var panel: NSPanel?
     private var menuBar: MenuBarController?
     private var updater: UpdaterController?
+    private var notifier: Notifier?
+    private var settingsWindow: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Ensure our support dir exists.
@@ -20,6 +23,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // regardless of the AGENTDECK_NO_INSTALL path below — the listener
         // requires it on every request.
         let token = AgentDeck.loadOrCreateToken()
+
+        // Wire the notifier into the store BEFORE the listener starts, so no
+        // early hook event can slip through and reach `apply(_:)` with
+        // `store.notifier` still nil.
+        let notifier = Notifier(settings: settings, sessionLookup: { [weak store] id in
+            store?.sessions.first { $0.id == id }
+        })
+        self.notifier = notifier
+        store.notifier = notifier
 
         // Start the event listener.
         let listener = EventListener(store: store, token: token)
@@ -55,6 +67,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let updater = UpdaterController()
         self.updater = updater
 
+        // Settings window (notification preferences). Retained for the app's
+        // lifetime; lazily creates its NSWindow on first show().
+        let settingsWindow = SettingsWindowController(settings: settings)
+        self.settingsWindow = settingsWindow
+
         // Menu bar presence: color-changing icon + session menu. Kept alongside
         // the floating overlay (the user wants both surfaces).
         menuBar = MenuBarController(
@@ -62,8 +79,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             awake: awake,
             updaterController: updater.controller,
             onToggleOverlay: { [weak self] in self?.toggleOverlay() },
-            isOverlayVisible: { [weak self] in self?.panel?.isVisible ?? false }
+            isOverlayVisible: { [weak self] in self?.panel?.isVisible ?? false },
+            onOpenSettings: { [weak self] in self?.settingsWindow?.show() }
         )
+
+        // Ask for notification permission once at launch. NSLog reports the
+        // outcome; harmless to call on every launch — the system only
+        // actually prompts the user the first time.
+        notifier.requestAuthorization()
 
         // Global toggle hotkey: ⌥⌘J (Option-Command-J). Deliberately avoids the
         // ⌃⌥⌘ "hyper" combos that Vivid claims, and J is rarely bound in iTerm2.

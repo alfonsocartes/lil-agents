@@ -20,7 +20,7 @@ struct OverlayView: View {
                     ForEach(store.sessions) { session in
                         SessionRow(session: session)
                             .contentShape(Rectangle())
-                            .onTapGesture { ITermJumper.jump(tty: session.tty, cwd: session.cwd) }
+                            .onTapGesture { TerminalJumpers.jump(session.jumpTarget) }
                     }
                 }
                 .padding(.vertical, 3)
@@ -52,14 +52,14 @@ private struct SessionRow: View {
                 .truncationMode(.middle)
             Spacer(minLength: 6)
             Button {
-                ITermJumper.jump(tty: session.tty, cwd: session.cwd)
+                TerminalJumpers.jump(session.jumpTarget)
             } label: {
                 Image(systemName: "arrow.up.forward.app")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("Jump to this pane in iTerm2")
+            .help("Jump to this session's pane")
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 3)
