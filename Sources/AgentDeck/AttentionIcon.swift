@@ -25,3 +25,33 @@ extension SessionStore.Attention {
         }
     }
 }
+
+/// Namespace for building the status-item `NSImage` itself, so both the
+/// AppKit menu bar and (in a later phase) SwiftUI can share the exact same
+/// pixels.
+enum AttentionIcon {
+    /// Builds the status-item image for a given attention level and
+    /// stay-awake state. Stay-awake ON swaps in a `bolt.fill` glyph while
+    /// keeping the traffic-light tint; otherwise the normal per-attention
+    /// symbol is used. Tinted images render non-template (`isTemplate =
+    /// false`); the untinted, no-attention image renders as a template so it
+    /// adapts to the menu bar's light/dark appearance.
+    static func image(attention: SessionStore.Attention, isAwake: Bool) -> NSImage? {
+        let symbol = isAwake ? "bolt.fill" : attention.symbolName
+        let color = attention.tint
+
+        let base = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+        if let color {
+            let tinted = base.applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "lil agents")?
+                .withSymbolConfiguration(tinted)
+            image?.isTemplate = false
+            return image
+        } else {
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "lil agents")?
+                .withSymbolConfiguration(base)
+            image?.isTemplate = true   // adapt to light/dark menu bar
+            return image
+        }
+    }
+}

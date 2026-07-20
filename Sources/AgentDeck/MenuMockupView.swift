@@ -95,7 +95,7 @@ struct MenuMockupView: View {
         } else {
             VStack(spacing: 2) {
                 ForEach(sessions) { session in
-                    SessionRow(session: session)
+                    SessionRow(session: session, context: .menu)
                 }
             }
         }
@@ -166,78 +166,6 @@ private struct StayAwakeRow: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 6)
-    }
-}
-
-/// One row per live session: status dot, project name + tool/status/elapsed
-/// detail line, and a jump affordance that becomes prominent on hover.
-private struct SessionRow: View {
-    let session: Session
-    @State private var isHovering = false
-
-    private var statusColor: Color {
-        switch session.status {
-        case .working: return .green
-        case .idle: return .orange
-        case .waitingApproval: return .red
-        }
-    }
-
-    private var statusLabel: String {
-        switch session.status {
-        case .working: return "working"
-        case .idle: return "idle"
-        case .waitingApproval: return "needs input"
-        }
-    }
-
-    private var elapsedLabel: String {
-        let seconds = max(0, Date().timeIntervalSince(session.lastUpdate))
-        let minutes = Int(seconds / 60)
-        if minutes < 1 { return "just now" }
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = minutes / 60
-        return "\(hours)h"
-    }
-
-    var body: some View {
-        Button {
-            // Mockup only — jump-to-session action would be wired up here.
-        } label: {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 8, height: 8)
-                    .frame(width: 18, alignment: .center)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(session.label)
-                        .font(.body)
-                        .lineLimit(1)
-                    Text("\(session.tool.display) · \(statusLabel) · \(elapsedLabel)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                Image(systemName: "arrow.up.forward.app")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .opacity(isHovering ? 1 : 0.35)
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(.quaternary)
-                    .opacity(isHovering ? 1 : 0)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
     }
 }
 

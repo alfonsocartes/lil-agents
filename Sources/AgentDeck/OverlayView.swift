@@ -18,9 +18,7 @@ struct OverlayView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(store.sessions) { session in
-                        SessionRow(session: session)
-                            .contentShape(Rectangle())
-                            .onTapGesture { TerminalJumpers.jump(session.jumpTarget) }
+                        SessionRow(session: session, context: .overlay)
                     }
                 }
                 .padding(.vertical, 3)
@@ -30,47 +28,5 @@ struct OverlayView: View {
         // As transparent as possible while the shape stays discernible.
         .background(Color.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.white.opacity(0.06)))
-    }
-}
-
-/// One compact session line: status dot, tool glyph, project label, jump button.
-private struct SessionRow: View {
-    let session: Session
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Circle()
-                .fill(color)
-                .frame(width: 7, height: 7)
-            Image(systemName: session.tool.symbol)
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
-                .frame(width: 12)
-            Text(session.label)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: 6)
-            Button {
-                TerminalJumpers.jump(session.jumpTarget)
-            } label: {
-                Image(systemName: "arrow.up.forward.app")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Jump to this session's pane")
-        }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 3)
-    }
-
-    // Traffic-light: green working, yellow idle, red needs your input.
-    private var color: Color {
-        switch session.status {
-        case .working:         return .green
-        case .idle:            return .yellow
-        case .waitingApproval: return .red
-        }
     }
 }

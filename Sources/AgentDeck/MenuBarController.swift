@@ -59,24 +59,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private func updateIcon() {
         guard let button = statusItem.button else { return }
 
-        // Stay-awake ON → bolt glyph (keeping the traffic-light color); otherwise
-        // the normal per-attention status symbol.
-        let symbol = awake.isAwake ? "bolt.fill" : store.attention.symbolName
-        let color = store.attention.tint
-
-        let base = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
-        if let color {
-            let tinted = base.applying(NSImage.SymbolConfiguration(paletteColors: [color]))
-            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "lil agents")?
-                .withSymbolConfiguration(tinted)
-            image?.isTemplate = false
-            button.image = image
-        } else {
-            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "lil agents")?
-                .withSymbolConfiguration(base)
-            image?.isTemplate = true   // adapt to light/dark menu bar
-            button.image = image
-        }
+        button.image = AttentionIcon.image(attention: store.attention, isAwake: awake.isAwake)
         button.toolTip = tooltip()
     }
 

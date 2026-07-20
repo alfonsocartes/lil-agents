@@ -75,7 +75,7 @@ Existing hooks from other tools and plugins are preserved — the installer only
 ## Requirements
 
 - **macOS 26 or later**
-- **Swift 6 toolchain** (Xcode 16+) to build from source
+- **Swift 6 toolchain** (Xcode 26+) to build from source
 - A supported terminal for click-to-jump — **[iTerm2](https://iterm2.com/)**, **Terminal.app**, **[WezTerm](https://wezterm.org/)**, or **[tmux](https://github.com/tmux/tmux)** for precise pane focus (**[Ghostty](https://ghostty.org/)** 1.3.0+ also gets precise split focus via its AppleScript API; older Ghostty falls back to app-activate). Sessions are still *tracked* in any terminal — this only affects jump-to-pane.
 - **Claude Code** and/or **Codex CLI** installed — whichever agents you want to monitor
 
