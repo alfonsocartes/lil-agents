@@ -15,9 +15,8 @@ import Sparkle
 final class MenuBarController: NSObject, NSMenuDelegate {
     private let store: SessionStore
     private let awake: StayAwakeController
+    private let overlay: OverlayController
     private let updaterController: SPUStandardUpdaterController
-    private let onToggleOverlay: () -> Void
-    private let isOverlayVisible: () -> Bool
     private let onOpenSettings: () -> Void
 
     private let statusItem: NSStatusItem
@@ -25,15 +24,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     init(store: SessionStore,
          awake: StayAwakeController,
+         overlay: OverlayController,
          updaterController: SPUStandardUpdaterController,
-         onToggleOverlay: @escaping () -> Void,
-         isOverlayVisible: @escaping () -> Bool,
          onOpenSettings: @escaping () -> Void) {
         self.store = store
         self.awake = awake
+        self.overlay = overlay
         self.updaterController = updaterController
-        self.onToggleOverlay = onToggleOverlay
-        self.isOverlayVisible = isOverlayVisible
         self.onOpenSettings = onOpenSettings
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -84,7 +81,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         // already handles ⌥⌘J, and a functional key equivalent here would fire a
         // SECOND toggle whenever this menu is open.
         let toggleTop = NSMenuItem(
-            title: (isOverlayVisible() ? "Hide overlay" : "Show overlay") + "   ⌥⌘J",
+            title: (overlay.isVisible ? "Hide overlay" : "Show overlay") + "   ⌥⌘J",
             action: #selector(toggleOverlay),
             keyEquivalent: ""
         )
@@ -164,7 +161,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         TerminalJumpers.jump(session.jumpTarget)
     }
 
-    @objc private func toggleOverlay() { onToggleOverlay() }
+    @objc private func toggleOverlay() { overlay.toggle() }
 
     @objc private func openSettings() { onOpenSettings() }
 

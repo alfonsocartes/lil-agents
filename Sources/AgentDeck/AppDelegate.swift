@@ -4,18 +4,28 @@ import Carbon.HIToolbox
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let store = SessionStore()
-    private let awake = StayAwakeController()
+    /// Composition root. A STORED property on purpose: a later `MenuBarExtra`
+    /// renders its label before `applicationDidFinishLaunching` runs, so these
+    /// objects must already exist by delegate-construction time.
+    let services = AppServices()
+
+    // Not exposed via AppServices — no view needs them.
     private let hotKeys = HotKeyCenter()
-    private let settings = AppSettings()
     private var listener: EventListener?
-    private var panel: NSPanel?
-    private var menuBar: MenuBarController?
-    private var updater: UpdaterController?
     private var notifier: Notifier?
+
+    private var menuBar: MenuBarController?
     private var settingsWindow: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Menu-bar-less, Dock-less agent app: the only surfaces are the status
+        // item and the floating overlay. `LSUIElement` covers the bundled app,
+        // but the unbundled `swift run` dev loop has no Info.plist and would
+        // otherwise take a Dock icon.
+        NSApp.setActivationPolicy(.accessory)
+
+        let store = services.store
+
         // Ensure our support dir exists.
         try? FileManager.default.createDirectory(at: AgentDeck.supportDir, withIntermediateDirectories: true)
 
@@ -26,8 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Wire the notifier into the store BEFORE the listener starts, so no
         // early hook event can slip through and reach `apply(_:)` with
-        // `store.notifier` still nil.
-        let notifier = Notifier(settings: settings, sessionLookup: { [weak store] id in
+        // `store.notifier` still nil. Notifier's init also installs the
+        // UNUserNotificationCenter delegate, so a notification tap is caught
+        // from this point on.
+        let notifier = Notifier(settings: services.settings, sessionLookup: { [weak store] id in
             store?.sessions.first { $0.id == id }
         })
         self.notifier = notifier
@@ -39,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.listener = listener
 
         // Reflect current sleep state.
-        awake.refresh()
+        services.awake.refresh()
 
         // Install/refresh CLI hooks every launch. install() is idempotent and
         // self-healing (upsertGroups repairs any stale/broken prior entries), so
@@ -55,31 +67,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Build the floating overlay (pure session list). Hide/show is driven by
+        // Show the floating overlay (pure session list). Hide/show is driven by
         // the global hotkey and the menu bar; the overlay itself has no chrome.
-        let content = OverlayView(store: store)
-        let panel = FloatingPanel(content: content)
-        panel.orderFrontRegardless()
-        self.panel = panel
-
-        // Sparkle auto-updater. Retained for the app's lifetime; its controller
-        // is handed to MenuBarController for the "Check for Updates…" item.
-        let updater = UpdaterController()
-        self.updater = updater
+        // OverlayController builds the panel lazily, here on first show.
+        services.overlay.show()
 
         // Settings window (notification preferences). Retained for the app's
         // lifetime; lazily creates its NSWindow on first show().
-        let settingsWindow = SettingsWindowController(settings: settings)
+        let settingsWindow = SettingsWindowController(settings: services.settings)
         self.settingsWindow = settingsWindow
 
         // Menu bar presence: color-changing icon + session menu. Kept alongside
         // the floating overlay (the user wants both surfaces).
         menuBar = MenuBarController(
             store: store,
-            awake: awake,
-            updaterController: updater.controller,
-            onToggleOverlay: { [weak self] in self?.toggleOverlay() },
-            isOverlayVisible: { [weak self] in self?.panel?.isVisible ?? false },
+            awake: services.awake,
+            overlay: services.overlay,
+            updaterController: services.updater.controller,
             onOpenSettings: { [weak self] in self?.settingsWindow?.show() }
         )
 
@@ -95,22 +99,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyCode: UInt32(kVK_ANSI_J),
             modifiers: UInt32(optionKey | cmdKey)
         ) { [weak self] in
-            self?.toggleOverlay()
+            self?.services.overlay.toggle()
         }
         NSLog("AgentDeck hotkey ⌥⌘J registered: \(registered)")
     }
 
-    private func toggleOverlay() {
-        guard let panel else { return }
-        if panel.isVisible {
-            panel.orderOut(nil)
-        } else {
-            panel.orderFrontRegardless()
-        }
-    }
-
     func applicationWillTerminate(_ notification: Notification) {
-        awake.appWillTerminate()
+        // Reverts the kernel SleepDisabled flag. Must always run.
+        services.awake.appWillTerminate()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
