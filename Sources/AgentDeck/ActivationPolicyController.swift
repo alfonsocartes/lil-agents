@@ -15,33 +15,30 @@ import SwiftUI
 /// and filter to the Settings window by the identifier SwiftUI stamps on it —
 /// never reverting for the floating overlay panel or the `MenuBarExtra` window.
 @MainActor
-final class ActivationPolicyController {
+final class ActivationPolicyController: NSObject {
     /// The identifier SwiftUI assigns to the window backing a `Settings` scene.
     /// Matching on it (rather than title or class) keeps the close filter tight:
     /// the overlay `NSPanel` and the `MenuBarExtra` window carry different (or
     /// no) identifiers, so their `willClose` never triggers the revert.
     private static let settingsSceneWindowID = "com_apple_SwiftUI_Settings_window"
 
-    private var closeObserver: NSObjectProtocol?
-
-    init() {
-        closeObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            // Posted on the main thread (queue: .main); hop onto the main actor
-            // to satisfy isolation before touching @MainActor state.
-            MainActor.assumeIsolated {
-                self?.windowWillClose(notification)
-            }
-        }
+    override init() {
+        super.init()
+        // Selector-based observation (rather than the block API): the block
+        // API hands over a non-Sendable `Notification` in a `@Sendable`
+        // closure, which Swift 6 rejects. `NSWindow.willCloseNotification` is
+        // always posted synchronously on the main thread, so the @objc entry
+        // point below genuinely runs on the main actor.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowWillClose(_:)),
+            name: NSWindow.willCloseNotification,
+            object: nil
+        )
     }
 
     deinit {
-        if let closeObserver {
-            NotificationCenter.default.removeObserver(closeObserver)
-        }
+        NotificationCenter.default.removeObserver(self)
     }
 
     /// Opens Settings and brings it frontmost. `action` is SwiftUI's
@@ -54,7 +51,12 @@ final class ActivationPolicyController {
         NSApp.activate()
     }
 
-    private func windowWillClose(_ notification: Notification) {
+    /// Invoked by NotificationCenter on the posting thread — always main for
+    /// `NSWindow.willCloseNotification` (AppKit posts window lifecycle
+    /// notifications from the main thread). The @objc entry keeps the class's
+    /// `@MainActor` isolation; ObjC dispatch doesn't check it, but the posting
+    /// contract guarantees it.
+    @objc private func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow,
               window.identifier?.rawValue == Self.settingsSceneWindowID else { return }
 

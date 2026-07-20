@@ -95,10 +95,15 @@ extension Notifier: UNUserNotificationCenterDelegate {
     /// the default behavior suppresses banners for a foreground app, which
     /// would make notifications invisible for an accessory app the user just
     /// happens to have focus near.
+    /// `@Sendable` on the completion handlers below: UNUserNotificationCenter's
+    /// blocks are ObjC blocks documented as callable from any thread; declaring
+    /// them `@Sendable` here (legal for @objc conformances, where blocks carry
+    /// no sendability) is what lets `didReceive` carry its handler into the
+    /// main-actor Task.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+        withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner, .sound])
     }
@@ -108,7 +113,7 @@ extension Notifier: UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
-        withCompletionHandler completionHandler: @escaping () -> Void
+        withCompletionHandler completionHandler: @escaping @Sendable () -> Void
     ) {
         let sessionID = response.notification.request.content.userInfo[Self.sessionIDKey] as? String
         Task { @MainActor in

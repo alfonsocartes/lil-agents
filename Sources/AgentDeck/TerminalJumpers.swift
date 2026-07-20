@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// A per-terminal strategy for raising the pane/window that owns a session.
 /// Implementations run entirely OFF the main thread (Process + osascript both
@@ -92,30 +93,38 @@ enum ExecutableResolver {
         ]
     }()
 
-    /// Resolved absolute paths, keyed by tool name, memoized for the process
-    /// lifetime so we don't spawn a login shell on every jump. Jumpers run on
-    /// a global queue (`TerminalJumpers.jump`), so all access is under a lock.
-    /// Hint-derived paths are intentionally NOT cached: the hint is per-event
-    /// input, while this cache is per-tool.
-    ///
-    /// The value type is `String?` inside the dictionary (so lookups yield
-    /// `String??`): a stored `.some(nil)` means "we tried to resolve this
-    /// tool and it isn't installed," distinct from an absent key ("never
-    /// tried"). This negative-caching is deliberate and permanent for the
-    /// process lifetime — not TTL'd. Without it, `TmuxJumper` (which calls
-    /// `resolve("tmux")` up to 5x per jump) would re-spawn a login shell on
-    /// every single jump whenever tmux isn't installed. The tradeoff: a
-    /// `brew install tmux` done after the app launched won't be picked up
-    /// until the app restarts — acceptable for a background utility app.
-    private static let cacheLock = NSLock()
-    private static var cache: [String: String?] = [:]
+    /// Mutex-guarded mutable state: the resolve cache plus the rejected-hint
+    /// log dedup set. Jumpers run concurrently on a global queue
+    /// (`TerminalJumpers.jump`), so all access goes through `state.withLock`.
+    /// Grouping both maps into one `Mutex` (rather than two
+    /// `nonisolated(unsafe)` statics under an `NSLock`) is what lets Swift 6
+    /// verify this global mutable state is actually protected.
+    private struct State {
+        /// Resolved absolute paths, keyed by tool name, memoized for the
+        /// process lifetime so we don't spawn a login shell on every jump.
+        /// Hint-derived paths are intentionally NOT cached: the hint is
+        /// per-event input, while this cache is per-tool.
+        ///
+        /// The value type is `String?` inside the dictionary (so lookups yield
+        /// `String??`): a stored `.some(nil)` means "we tried to resolve this
+        /// tool and it isn't installed," distinct from an absent key ("never
+        /// tried"). This negative-caching is deliberate and permanent for the
+        /// process lifetime — not TTL'd. Without it, `TmuxJumper` (which calls
+        /// `resolve("tmux")` up to 5x per jump) would re-spawn a login shell on
+        /// every single jump whenever tmux isn't installed. The tradeoff: a
+        /// `brew install tmux` done after the app launched won't be picked up
+        /// until the app restarts — acceptable for a background utility app.
+        var cache: [String: String?] = [:]
 
-    /// Rejected-hint log de-duplication: we warn once per distinct hint rather
-    /// than on every jump, keeping the failure visible without log spam. This
-    /// set is capped at `maxLoggedRejectedHints` (see `logRejectedHint`) so a
-    /// local client abusing the listener can't grow it without bound by
-    /// POSTing endless distinct hint values.
-    private static var loggedRejectedHints: Set<String> = []
+        /// Rejected-hint log de-duplication: we warn once per distinct hint
+        /// rather than on every jump, keeping the failure visible without log
+        /// spam. This set is capped at `maxLoggedRejectedHints` (see
+        /// `logRejectedHint`) so a local client abusing the listener can't
+        /// grow it without bound by POSTing endless distinct hint values.
+        var loggedRejectedHints: Set<String> = []
+    }
+
+    private static let state = Mutex(State())
     private static let maxLoggedRejectedHints = 100
 
     /// Test seam: clears the process-lifetime memoization (`cache`) and the
@@ -123,10 +132,7 @@ enum ExecutableResolver {
     /// test's resolve/reject outcomes can't leak into the next. No production
     /// code path calls this.
     internal static func _resetCacheForTesting() {
-        cacheLock.lock()
-        cache.removeAll()
-        loggedRejectedHints.removeAll()
-        cacheLock.unlock()
+        state.withLock { $0 = State() }
     }
 
     /// Returns the absolute path to `name`, or nil if it genuinely can't be
@@ -146,9 +152,7 @@ enum ExecutableResolver {
             // reach `Process`, but it also shouldn't break a valid install.
         }
 
-        cacheLock.lock()
-        let cached = cache[name]
-        cacheLock.unlock()
+        let cached = state.withLock { $0.cache[name] }
         // `cached` is `String??` here: `.some(.some(path))` is a resolved
         // hit, `.some(nil)` is a cached miss (negative cache — see the
         // `cache` doc comment above), and `nil` means never attempted.
@@ -169,9 +173,7 @@ enum ExecutableResolver {
 
         // Cache the outcome either way — success AND failure — so a tool
         // that isn't installed doesn't re-spawn a login shell on every jump.
-        cacheLock.lock()
-        cache[name] = resolved
-        cacheLock.unlock()
+        state.withLock { $0.cache[name] = resolved }
         return resolved
     }
 
@@ -220,12 +222,11 @@ enum ExecutableResolver {
     /// logging for hints not already tracked — dedup keeps working up to the
     /// cap, but the set itself stops growing past it.
     private static func logRejectedHint(_ hint: String, name: String) {
-        cacheLock.lock()
-        var isNew = false
-        if !loggedRejectedHints.contains(hint), loggedRejectedHints.count < maxLoggedRejectedHints {
-            isNew = loggedRejectedHints.insert(hint).inserted
+        let isNew = state.withLock { s -> Bool in
+            guard !s.loggedRejectedHints.contains(hint),
+                  s.loggedRejectedHints.count < maxLoggedRejectedHints else { return false }
+            return s.loggedRejectedHints.insert(hint).inserted
         }
-        cacheLock.unlock()
         if isNew {
             NSLog("ExecutableResolver: rejected untrusted \(name) hint '\(sanitizedForLog(hint))' (not an executable under a trusted install prefix); falling back to the standard search")
         }

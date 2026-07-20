@@ -49,6 +49,18 @@ import Testing
         try body(home)
     }
 
+    /// The defense-in-depth home guard (see `HookInstaller.homeDirectory`) only
+    /// protects the real ~/.claude if the harness detection actually fires in
+    /// THIS process. Verified by experiment: under `swift test` the suite runs
+    /// in swiftpm-testing-helper, where only the dyld Testing-framework scan
+    /// detects the harness (no XCTest class, no XCTest* env vars). If this
+    /// expectation ever fails, the fatalError guard is dead code and a test
+    /// reaching HookInstaller without an override would silently write to the
+    /// real home directory again.
+    @Test func harnessDetectionFiresUnderTheTestRunner() {
+        #expect(HookInstaller.isRunningUnderTestHarness)
+    }
+
     @Test func installIsIdempotent() throws {
         try withTempHome { home in
             try HookInstaller.install(port: AgentDeck.port)

@@ -15,11 +15,6 @@ let package = Package(
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Sources/AgentDeck",
-            swiftSettings: [
-                // Pragmatic: v5 language mode avoids strict-concurrency churn for an
-                // AppKit/Network app whose callbacks hop to the main actor manually.
-                .swiftLanguageMode(.v5)
-            ],
             linkerSettings: [
                 // Sparkle.framework ships as a binary XCFramework and is embedded into
                 // Contents/Frameworks/ by scripts/build-app.sh. This rpath lets the
@@ -33,11 +28,7 @@ let package = Package(
         .testTarget(
             name: "AgentDeckTests",
             dependencies: ["AgentDeck"],
-            path: "tests/AgentDeckTests",
-            swiftSettings: [
-                // Match the main target's language mode (6b flips both).
-                .swiftLanguageMode(.v5)
-            ]
+            path: "tests/AgentDeckTests"
         )
     ]
 )

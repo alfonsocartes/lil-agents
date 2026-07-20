@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Synchronization
 
 /// A tiny loopback HTTP server that receives `POST /event` from installed CLI
 /// hooks and forwards decoded `HookEvent`s to the SessionStore on the main actor.
@@ -15,7 +16,7 @@ import Network
 /// before its body is even decoded. Buffering is bounded throughout so a
 /// malformed or hostile request can't grow memory unboundedly or crash the
 /// process — see `maxHeaderBytes`/`maxBodyBytes`/`maxConnections` below.
-final class EventListener {
+final class EventListener: Sendable {
     /// Header block (everything before `\r\n\r\n`) larger than this is refused.
     /// A real request's headers are well under 1 KB.
     private static let maxHeaderBytes = 8 * 1024
@@ -26,11 +27,22 @@ final class EventListener {
     /// unbounded per-connection state.
     private static let maxConnections = 16
 
+    // `Sendable` is checked, not asserted: every stored property is an
+    // immutable `let` of a Sendable type (`SessionStore` is @MainActor-
+    // isolated, hence Sendable; the two mutable pieces of state live inside
+    // `Mutex`es). NWListener/NWConnection handlers are `@Sendable` closures
+    // running on `queue`, so `self` must legitimately cross isolation here.
     private let store: SessionStore
     private let token: String
-    private var listener: NWListener?
+    /// Retains the live NWListener for the app's lifetime; written once in
+    /// `start()`. Mutex-wrapped purely so the retention slot is concurrency-
+    /// safe — nothing reads it back.
+    private let listener = Mutex<NWListener?>(nil)
     private let queue = DispatchQueue(label: "agentdeck.listener")
-    private var activeConnections = 0
+    /// In-flight connection count. Only ever touched from handlers running on
+    /// the serial `queue`, but kept in a Mutex so the invariant is enforced by
+    /// the type system rather than by convention.
+    private let activeConnections = Mutex(0)
 
     init(store: SessionStore, token: String) {
         self.store = store
@@ -58,7 +70,7 @@ final class EventListener {
                 }
             }
             listener.start(queue: queue)
-            self.listener = listener
+            self.listener.withLock { $0 = listener }
             NSLog("AgentDeck listening on 127.0.0.1:\(AgentDeck.port)")
         } catch {
             NSLog("AgentDeck could not start listener: \(error)")
@@ -66,13 +78,17 @@ final class EventListener {
     }
 
     private func handle(_ conn: NWConnection) {
-        guard activeConnections < Self.maxConnections else {
+        let accepted = activeConnections.withLock { count -> Bool in
+            guard count < Self.maxConnections else { return false }
+            count += 1
+            return true
+        }
+        guard accepted else {
             // Over the concurrent-connection cap — refuse outright rather than
             // accept and let per-connection buffers pile up.
             conn.cancel()
             return
         }
-        activeConnections += 1
         conn.start(queue: queue)
         receive(conn, buffer: Data())
     }
@@ -186,7 +202,7 @@ final class EventListener {
         let response = "HTTP/1.1 \(status)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         conn.send(content: Data(response.utf8), completion: .contentProcessed { [weak self] _ in
             conn.cancel()
-            self?.activeConnections -= 1
+            self?.activeConnections.withLock { $0 -= 1 }
         })
     }
 }

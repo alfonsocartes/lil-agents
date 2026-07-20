@@ -1,4 +1,6 @@
 import Foundation
+import MachO
+import Synchronization
 
 /// Installs and removes AgentDeck's lifecycle hooks in Claude Code and Codex CLI.
 ///
@@ -21,11 +23,63 @@ enum HookInstaller {
     /// computed from. Default `nil` → the real `homeDirectoryForCurrentUser`,
     /// so production behavior is byte-for-byte unchanged. Tests set this to a
     /// temp dir so install/uninstall never read or mutate the developer's real
-    /// `~/.claude/settings.json` or `~/.codex/hooks.json`.
-    internal static var homeDirectoryOverride: URL?
+    /// `~/.claude/settings.json` or `~/.codex/hooks.json`. Mutex-backed so the
+    /// static is concurrency-safe under Swift 6 (tests that set it are also
+    /// `.serialized`, but the storage itself must not be a bare mutable global).
+    internal static var homeDirectoryOverride: URL? {
+        get { homeDirectoryOverrideStorage.withLock { $0 } }
+        set { homeDirectoryOverrideStorage.withLock { $0 = newValue } }
+    }
+    private static let homeDirectoryOverrideStorage = Mutex<URL?>(nil)
+
+    /// True when this code is running inside a test harness (XCTest or
+    /// swift-testing). Belt-and-braces on purpose, but each check is verified:
+    ///  - `NSClassFromString("XCTestCase")` / the `XCTest*` env vars catch
+    ///    XCTest-hosted runs (Xcode test action, xctest bundles).
+    ///  - The dyld image scan catches swift-testing under `swift test`, which
+    ///    (verified by experiment on this toolchain) runs suites inside
+    ///    `swiftpm-testing-helper` with NO test-related env vars and WITHOUT
+    ///    XCTest linked — the only reliable in-process signal there is the
+    ///    loaded `Testing.framework`/`lib_TestingInterop` image. A production
+    ///    app process never loads either, so this can't false-positive.
+    ///    (`SWIFT_TESTING`-style env vars were tried first and are NOT set.)
+    /// `internal` (not `private`) so a test can assert the detection actually
+    /// fires under the real harness — see HookInstallerTests.
+    internal static let isRunningUnderTestHarness: Bool = {
+        if NSClassFromString("XCTestCase") != nil { return true }
+        let env = ProcessInfo.processInfo.environment
+        if env["XCTestConfigurationFilePath"] != nil || env["XCTestSessionIdentifier"] != nil {
+            return true
+        }
+        for i in 0..<_dyld_image_count() {
+            guard let cName = _dyld_get_image_name(i) else { continue }
+            let name = String(cString: cName)
+            if name.contains("/Testing.framework/")
+                || name.contains("libTesting.dylib")
+                || name.contains("lib_TestingInterop") {
+                return true
+            }
+        }
+        return false
+    }()
 
     private static var homeDirectory: URL {
-        homeDirectoryOverride ?? FileManager.default.homeDirectoryForCurrentUser
+        if let override = homeDirectoryOverride { return override }
+        // Hard guard (from a real incident): a racy early test run reached this
+        // path with `homeDirectoryOverride == nil` and rewrote the developer's
+        // REAL ~/.claude/settings.json. The test suite is `.serialized` now,
+        // but if any future test — or test-ordering change — ever gets here
+        // without an override, crash loudly instead of touching the real home.
+        // Production (non-test) processes never trip this: the harness checks
+        // above are all false outside `swift test`/Xcode test runs.
+        if isRunningUnderTestHarness {
+            fatalError("""
+                HookInstaller: refusing to touch the real home directory from a test process. \
+                Set HookInstaller.homeDirectoryOverride to a temp directory before calling any \
+                HookInstaller API (see HookInstallerTests.withTempHome).
+                """)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
     }
 
     private static var claudeSettingsURL: URL {
