@@ -21,8 +21,8 @@ struct AgentDeckApp: App {
                 store: appDelegate.services.store,
                 awake: appDelegate.services.awake,
                 overlay: appDelegate.services.overlay,
-                onOpenSettings: { appDelegate.services.settingsWindow.show() },
-                onCheckForUpdates: { appDelegate.services.updater.controller.checkForUpdates(nil) }
+                updater: appDelegate.services.updater,
+                onOpenSettings: { appDelegate.services.settingsWindow.show() }
             )
         } label: {
             StatusIconLabel(

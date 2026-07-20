@@ -18,7 +18,9 @@ struct OverlayView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(store.sessions) { session in
-                        SessionRow(session: session, context: .overlay)
+                        SessionRow(session: session, context: .overlay) {
+                            TerminalJumpers.jump(session.jumpTarget)
+                        }
                     }
                 }
                 .padding(.vertical, 3)

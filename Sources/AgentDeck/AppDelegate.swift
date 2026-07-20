@@ -69,11 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // OverlayController builds the panel lazily, here on first show.
         services.overlay.show()
 
-        // The menu bar presence is now the SwiftUI `MenuBarExtra` scene in
-        // `AgentDeckApp` (status icon + session dropdown). The legacy
-        // `MenuBarController` (NSStatusItem/NSMenu) is intentionally no longer
-        // constructed here — see its file header. The Settings window it used
-        // to drive now lives on `AppServices` (`services.settingsWindow`).
+        // The menu bar presence is the SwiftUI `MenuBarExtra` scene in
+        // `AgentDeckApp` (status icon + session dropdown); the legacy
+        // NSStatusItem/NSMenu implementation has been removed. The Settings
+        // window it used to drive lives on `AppServices` (`services.settingsWindow`).
 
         // Ask for notification permission once at launch. NSLog reports the
         // outcome; harmless to call on every launch — the system only

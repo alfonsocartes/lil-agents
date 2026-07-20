@@ -116,7 +116,7 @@ extension Notifier: UNUserNotificationCenterDelegate {
                 //
                 // Notifier only has `sessionLookup` and `settings` to work
                 // with — it has no reference to AppDelegate's floating panel
-                // or MenuBarController, so it can't reveal the overlay
+                // or the menu-bar panel, so it can't reveal the overlay
                 // itself without threading one through from outside. Falling
                 // back to activating the app is the best available response
                 // without touching other files.

@@ -18,13 +18,17 @@ struct SessionRow: View {
 
     let session: Session
     let context: Context
+    /// What happens when the row is tapped. The call site decides — the
+    /// overlay must never dismiss anything (it isn't hosted in a dismissable
+    /// panel), while the menu-bar context also closes the `MenuBarExtra`
+    /// panel after jumping. Keeping that decision out of this shared view is
+    /// what lets both surfaces reuse it without drifting.
+    let onSelect: () -> Void
 
     @State private var isHovering = false
 
     var body: some View {
-        Button {
-            TerminalJumpers.jump(session.jumpTarget)
-        } label: {
+        Button(action: onSelect) {
             switch context {
             case .overlay: overlayLabel
             case .menu:    menuLabel

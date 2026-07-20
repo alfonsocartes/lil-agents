@@ -8,7 +8,7 @@ protocol TerminalJumper {
 }
 
 /// Routes a `JumpTarget` to the jumper for its terminal kind, off the main
-/// thread. This is the single entry point call sites (`MenuBarController`,
+/// thread. This is the single entry point call sites (`MenuBarContentView`,
 /// `OverlayView`) use — they no longer talk to a specific jumper directly.
 enum TerminalJumpers {
     static func jump(_ target: JumpTarget) {

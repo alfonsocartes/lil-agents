@@ -4,7 +4,7 @@ import SwiftUI
 // MARK: - Menu-bar dropdown
 //
 // The SwiftUI content rendered inside the `MenuBarExtra` (window style) that
-// replaced the legacy NSMenu built by MenuBarController. Wired to the live
+// replaced the legacy NSStatusItem/NSMenu implementation. Wired to the live
 // SessionStore, overlay controller, stay-awake controller, and the settings /
 // Sparkle / uninstall actions.
 //
@@ -21,11 +21,17 @@ struct MenuBarContentView: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var awake: StayAwakeController
     @ObservedObject var overlay: OverlayController
+    @ObservedObject var updater: UpdaterController
 
     /// Opens the existing AppKit Settings window (SettingsWindowController).
     let onOpenSettings: () -> Void
-    /// Triggers the same Sparkle "Check for Updates…" action the old menu used.
-    let onCheckForUpdates: () -> Void
+
+    /// Closes the `MenuBarExtra` panel. Spike-verified to work for the
+    /// `.window` menu-bar style. Called after every action that navigates
+    /// away or opens something else, EXCEPT the stay-awake toggle — flipping
+    /// a toggle and having the panel vanish out from under you is hostile;
+    /// users often toggle and glance at the resulting state.
+    @Environment(\.dismiss) private var dismiss
 
     private var activeCount: Int { store.sessions.count }
 
@@ -49,10 +55,16 @@ struct MenuBarContentView: View {
                     icon: overlay.isVisible ? "eye.slash" : "eye",
                     title: overlay.isVisible ? "Hide overlay" : "Show overlay",
                     trailing: "⌥⌘J"
-                ) { overlay.toggle() }
+                ) {
+                    overlay.toggle()
+                    dismiss()
+                }
 
                 // Real Toggle bound through the controller's own toggle() so the
                 // sudoers prompt / battery-floor guards behave exactly as before.
+                // Deliberately does NOT dismiss: flipping a toggle and having the
+                // panel vanish out from under you is hostile — people toggle this
+                // and want to glance at the resulting state.
                 StayAwakeRow(isOn: Binding(
                     get: { awake.isAwake },
                     set: { _ in awake.toggle() }
@@ -64,11 +76,19 @@ struct MenuBarContentView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 MenuRow(icon: "gearshape", title: "Settings…", trailing: "⌘,") {
+                    dismiss()
                     onOpenSettings()
                 }
+                .keyboardShortcut(",", modifiers: .command)
+
+                // Sparkle can't validate an NSMenuItem's enabled state for us
+                // under MenuBarExtra, so canCheckForUpdates (bridged from
+                // SPUUpdater via Combine in UpdaterController) drives it here.
                 MenuRow(icon: "arrow.down.circle", title: "Check for Updates…", trailing: nil) {
-                    onCheckForUpdates()
+                    dismiss()
+                    updater.controller.checkForUpdates(nil)
                 }
+                .disabled(!updater.canCheckForUpdates)
             }
 
             Divider()
@@ -79,6 +99,9 @@ struct MenuBarContentView: View {
             // from Quit by the divider below so the destructive action is never
             // adjacent to the most-used item.
             MenuRow(icon: "trash", title: "Uninstall lil agents…", trailing: nil) {
+                // Dismiss BEFORE prompting: the panel must not hover over the
+                // confirmation alert.
+                dismiss()
                 Uninstaller.promptAndUninstall()
             }
 
@@ -87,9 +110,11 @@ struct MenuBarContentView: View {
 
             // MUST be NSApp.terminate(nil): only applicationWillTerminate reverts
             // the kernel SleepDisabled flag. Never exit()/NSApplication.stop.
+            // No dismiss needed — the process exits.
             MenuRow(icon: "power", title: "Quit lil agents", trailing: "⌘Q") {
                 NSApp.terminate(nil)
             }
+            .keyboardShortcut("q", modifiers: .command)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -100,6 +125,7 @@ struct MenuBarContentView: View {
         HStack {
             Text("lil agents")
                 .font(.headline)
+                .accessibilityAddTraits(.isHeader)
             Spacer()
             Text("\(activeCount) active")
                 .font(.caption)
@@ -107,6 +133,8 @@ struct MenuBarContentView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 2)
                 .background(.quaternary, in: Capsule())
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(activeCount) active session\(activeCount == 1 ? "" : "s")")
         }
         .padding(.vertical, 4)
     }
@@ -127,7 +155,10 @@ struct MenuBarContentView: View {
         } else {
             VStack(spacing: 2) {
                 ForEach(store.sessions) { session in
-                    SessionRow(session: session, context: .menu)
+                    SessionRow(session: session, context: .menu) {
+                        TerminalJumpers.jump(session.jumpTarget)
+                        dismiss()
+                    }
                 }
             }
         }
@@ -182,6 +213,11 @@ private struct MenuRow: View {
                     Text(trailing)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        // Shortcut hint glyphs (e.g. "⌥⌘J", "⌘,") read as noise
+                        // through VoiceOver — the row's own accessibilityLabel
+                        // below already conveys the action; hide the redundant
+                        // (and, for "⌥⌘J", non-functional) trailing text.
+                        .accessibilityHidden(true)
                 }
             }
             .padding(.horizontal, 6)
@@ -194,6 +230,7 @@ private struct MenuRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
         .onHover { isHovering = $0 }
     }
 }
@@ -216,6 +253,11 @@ private struct StayAwakeRow: View {
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .labelsHidden()
+                // Toggle already reports its on/off state to VoiceOver; the
+                // missing piece is what it DOES — `labelsHidden()` above
+                // strips the visible text from the accessibility tree too,
+                // so spell it out explicitly here.
+                .accessibilityLabel("Stay awake while lid is closed")
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 6)
@@ -252,12 +294,13 @@ private func previewMenu(sessions: [Session], awake: Bool) -> some View {
     let store = SessionStore.previewStore(sessions)
     let stayAwake = StayAwakeController()
     let overlay = OverlayController(store: store)
+    let updater = UpdaterController()
     return MenuBarContentView(
         store: store,
         awake: stayAwake,
         overlay: overlay,
-        onOpenSettings: {},
-        onCheckForUpdates: {}
+        updater: updater,
+        onOpenSettings: {}
     )
     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     .padding(20)
