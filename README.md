@@ -8,23 +8,29 @@
 
 ---
 
-**Stop alt-tabbing to check if your AI coding agent is done.** `lil agents` (aka **AgentDeck**) is a tiny, native macOS menu-bar app that shows the live status of every [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [OpenAI Codex CLI](https://developers.openai.com/codex/) session in a always-on-top overlay — working, idle, or waiting for you — and lets you jump straight to the terminal pane that needs attention.
+**Stop alt-tabbing to check if your AI coding agent is done.** `lil agents` (aka **AgentDeck**) is a tiny, native macOS menu-bar app that shows the live status of every [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [OpenAI Codex CLI](https://developers.openai.com/codex/) session in an always-on-top overlay — working, idle, or waiting for you — and lets you jump straight to the terminal pane that needs attention.
 
 > Built for developers running **multiple AI agents in parallel** across terminal tabs and windows. One glance tells you which session is blocked on a permission prompt, which finished its turn, and which is still crunching.
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-black)
-![Swift](https://img.shields.io/badge/Swift-6.0-orange)
+![Swift](https://img.shields.io/badge/Swift-6.2-orange)
 ![UI](https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-v0.3.0-brightgreen)
+![Release](https://img.shields.io/github/v/release/alfonsocartes/lil-agents?color=brightgreen)
 
 <p align="center">
-  <img src="assets/overlay-screenshot.png" alt="lil agents floating overlay showing live Claude Code and Codex sessions with traffic-light status" width="300" />
+  <img src="assets/overlay-screenshot.png" alt="lil agents floating overlay showing three live Claude Code sessions with green traffic-light status dots" width="280" />
   &nbsp;&nbsp;
-  <img src="assets/menu-screenshot.png" alt="lil agents menu bar menu with session list, jump-to-pane, stay awake toggle, and overlay hotkey" width="300" />
+  <img src="assets/menu-screenshot.png" alt="lil agents menu bar menu with session list, per-session status and agent, jump-to-pane arrows, stay awake toggle, settings, and overlay hotkey" width="300" />
 </p>
 
-<p align="center"><sub>The always-on-top overlay (left) and the menu-bar menu (right) — every live agent session at a glance.</sub></p>
+<p align="center"><sub>The always-on-top overlay (left) — compact by default, revealing which agent owns a row on hover — and the menu-bar menu (right), with per-session status, agent, and last-update time.</sub></p>
+
+<p align="center">
+  <img src="assets/settings-screenshot.png" alt="lil agents settings window with notification toggles for needs-approval and finished-turn alerts, sound, and an uninstall button" width="380" />
+</p>
+
+<p align="center"><sub>Settings — choose which states alert you, whether they play a sound, and uninstall cleanly.</sub></p>
 
 ---
 
@@ -43,7 +49,7 @@ Click any session and it **jumps to the exact terminal pane that owns it** — a
 ## Features
 
 - **Real-time agent monitoring** — tracks Claude Code and Codex CLI sessions as they start, work, prompt, and finish.
-- **Floating overlay** — a compact, near-transparent, always-on-top list of live sessions. Toggle it anywhere with a global hotkey (**⌥⌘J**).
+- **Floating overlay** — a compact, translucent, always-on-top list of live sessions; hover a row to reveal which agent owns it. Toggle it anywhere with a global hotkey (**⌥⌘J**).
 - **Menu bar status icon** — the menu-bar glyph changes color to reflect the most attention-worthy session (red → yellow → green), so you know the state without even opening the overlay.
 - **One-click jump to terminal** — click a session (in the overlay or the menu) to focus the exact pane that owns it. Precise focus for **iTerm2, Terminal.app, WezTerm, and tmux** (matched by controlling TTY / pane id); **Ghostty** gets precise split focus too via its AppleScript API (working-directory match on 1.3.0+, exact TTY match on 1.4.0+/tip), falling back to bringing the app forward on older builds.
 - **Notification Center alerts** — optionally get a banner (and sound) the instant a session goes **🔴 needs-approval** or **🟡 finished-its-turn**. Fires once per transition; tap the alert to jump straight to that pane. Fully configurable in **Settings** (which states, sound, on/off).
@@ -60,7 +66,7 @@ Click any session and it **jumps to the exact terminal pane that owns it** — a
 - **Claude Code** → `~/.claude/settings.json`
 - **Codex CLI** → `~/.codex/hooks.json`
 
-On each lifecycle event (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`/`PermissionRequest`, `Stop`, `SubagentStop`, `SessionEnd`), a tiny generated forwarder script reads the hook's JSON, tags it with the terminal's TTY, and `POST`s it to the app's local listener. The app maps those events to a coarse status (`working` / `idle` / `waitingApproval`) and updates the overlay and menu-bar icon instantly.
+On each lifecycle event — `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `SubagentStop`, and `SessionEnd` for Claude Code; `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, and `Stop` for Codex CLI — a tiny generated forwarder script reads the hook's JSON, tags it with the terminal's TTY, and `POST`s it to the app's local listener. The app maps those events to a coarse status (`working` / `idle` / `waitingApproval`) and updates the overlay and menu-bar icon instantly.
 
 ```
 Claude Code / Codex CLI
@@ -75,7 +81,7 @@ Existing hooks from other tools and plugins are preserved — the installer only
 ## Requirements
 
 - **macOS 26 or later**
-- **Swift 6 toolchain** (Xcode 26+) to build from source
+- **Swift 6.2 toolchain** (Xcode 26+) to build from source
 - A supported terminal for click-to-jump — **[iTerm2](https://iterm2.com/)**, **Terminal.app**, **[WezTerm](https://wezterm.org/)**, or **[tmux](https://github.com/tmux/tmux)** for precise pane focus (**[Ghostty](https://ghostty.org/)** 1.3.0+ also gets precise split focus via its AppleScript API; older Ghostty falls back to app-activate). Sessions are still *tracked* in any terminal — this only affects jump-to-pane.
 - **Claude Code** and/or **Codex CLI** installed — whichever agents you want to monitor
 
@@ -102,7 +108,7 @@ To check manually: menu bar → **Check for Updates…**
 To build from source instead of downloading a release, clone and build the `.app` with the included script:
 
 ```bash
-git clone https://github.com/<your-org>/lil-agents.git
+git clone https://github.com/alfonsocartes/lil-agents.git
 cd lil-agents
 scripts/build-app.sh          # release build → dist/lil agents.app
 open "dist/lil agents.app"
@@ -114,9 +120,15 @@ Or build the raw binary with SwiftPM:
 swift build -c release
 ```
 
+Run the test suite with:
+
+```bash
+swift test
+```
+
 On first launch, use the app's install action to wire up the CLI hooks, then start (or restart) a Claude Code or Codex session — it should appear in the overlay immediately.
 
-> **First-run permissions:** macOS will show a one-time **Automation** prompt so the app can control iTerm2 when you jump to a pane. The build is ad-hoc code-signed so this grant persists across launches.
+> **First-run permissions:** macOS will show a one-time **Automation** prompt so the app can control your terminal when you jump to a pane. Local source builds are ad-hoc code-signed (release downloads are Developer ID signed and notarized), which is enough for this grant to persist across launches.
 
 ## Usage
 
@@ -126,7 +138,7 @@ On first launch, use the app's install action to wire up the CLI hooks, then sta
 | Jump to a session's terminal | Click the session row (overlay) or menu item, or tap its notification |
 | Configure notifications | Menu bar → **Settings…** (**⌘,**) |
 | Keep Mac awake with lid closed | Menu bar → **Stay awake (lid closed)** |
-| Quit | Menu bar → **Quit lil agents** |
+| Quit | Menu bar → **Quit lil agents** (**⌘Q**) |
 
 Status at a glance:
 
@@ -144,7 +156,7 @@ Status at a glance:
 
 ## Uninstalling
 
-Menu bar → **Uninstall lil agents…**
+Menu bar → **Settings…** (**⌘,**) → **Uninstall lil agents…**
 
 This removes everything `lil agents` added to your system:
 
