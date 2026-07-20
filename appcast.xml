@@ -24,7 +24,7 @@
         <pubDate>Sun, 19 Jul 2026 00:00:00 +0000</pubDate>
         <sparkle:version>123</sparkle:version>
         <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
-        <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+        <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
         <enclosure
           url="https://github.com/alfonsocartes/lil-agents/releases/download/v0.2.0/lil-agents-0.2.0.zip"
           length="1234567"

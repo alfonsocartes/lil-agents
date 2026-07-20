@@ -1,9 +1,9 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "AgentDeck",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v26)],
     dependencies: [
         // Sparkle powers in-app auto-updates (Check for Updates… + background checks).
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),

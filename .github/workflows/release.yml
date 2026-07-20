@@ -39,7 +39,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - name: Checkout (full history)
@@ -56,12 +56,21 @@ jobs:
           echo "raw_ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      # Package.swift requires Swift 6 tools (.swiftLanguageMode(.v5)); the image
-      # default can be older, so select the newest installed Xcode explicitly.
+      # Package.swift requires swift-tools-version 6.2 (for platforms: [.macOS(.v26)]);
+      # the image default can be older, so select an installed Xcode explicitly. Images
+      # can carry a beta Xcode alongside the stable release (e.g. Xcode_26.2_beta.app
+      # next to Xcode_26.1.app); `sort -V` would pick the beta since its version string
+      # sorts higher, which has broken this pipeline twice before. Filter betas out
+      # before sorting and fail loudly if nothing non-beta remains.
       - name: Select latest Xcode
         run: |
           set -euo pipefail
-          LATEST="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          LATEST="$(ls -d /Applications/Xcode_*.app | grep -iv beta | sort -V | tail -1)"
+          if [[ -z "$LATEST" ]]; then
+            echo "error: no non-beta Xcode installation found under /Applications" >&2
+            ls -d /Applications/Xcode_*.app >&2 || true
+            exit 1
+          fi
           echo "Selecting $LATEST"
           sudo xcode-select -s "$LATEST/Contents/Developer"
           swift --version
