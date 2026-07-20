@@ -92,12 +92,25 @@ struct TmuxJumper: TerminalJumper {
         process.standardError = errPipe
         do {
             try process.run()
-            process.waitUntilExit()
-            let out = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            // Drain both pipes concurrently BEFORE waitUntilExit(): tmux can
+            // write more than the pipe's ~64KB kernel buffer to either
+            // stream, and once that buffer fills the child blocks inside
+            // write(2) until we read from it. waitUntilExit() only returns
+            // once the child has actually exited, so calling it first while a
+            // pipe sits undrained is a permanent deadlock (we're waiting on
+            // the child, the child is waiting on us). Reading both pipes off
+            // separate queues first — rather than only reading stderr on the
+            // failure path, as before — means neither stream can back up
+            // regardless of which one tmux fills or whether the command
+            // succeeds. Shared with the other Process-running jumpers via
+            // `AppleScriptSupport.drainAndWait`; stderr is still only USED
+            // below on the failure path, it's just always drained.
+            let (outData, errData) = AppleScriptSupport.drainAndWait(process, outPipe: outPipe, errPipe: errPipe)
+            let out = String(data: outData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard process.terminationStatus == 0 else {
                 if !quiet {
-                    let err = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                    let err = String(data: errData, encoding: .utf8)?
                         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     NSLog("TmuxJumper: tmux \(args.joined(separator: " ")) failed: \(err)")
                 }

@@ -88,10 +88,21 @@ struct WezTermJumper: TerminalJumper {
         process.standardError = errPipe
         do {
             try process.run()
-            process.waitUntilExit()
-            let out = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            // Drain both pipes concurrently BEFORE waitUntilExit(): `wezterm
+            // cli list --format json` can emit well over the pipe's ~64KB
+            // kernel buffer on a session with many panes, and once that
+            // buffer fills the child blocks inside write(2) until we read
+            // from it. waitUntilExit() only returns once the child has
+            // actually exited, so calling it first while a pipe sits
+            // undrained is a permanent deadlock (we're waiting on the child,
+            // the child is waiting on us). Reading both pipes off separate
+            // queues first means neither stream can back up regardless of
+            // which one wezterm fills. Shared with the other Process-running
+            // jumpers via `AppleScriptSupport.drainAndWait`.
+            let (outData, errData) = AppleScriptSupport.drainAndWait(process, outPipe: outPipe, errPipe: errPipe)
+            let out = String(data: outData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let err = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            let err = String(data: errData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return (process.terminationStatus, out, err)
         } catch {

@@ -12,17 +12,27 @@ final class SessionStore: ObservableObject {
     private var pruneTimer: Timer?
 
     /// Last attention-state we actually fired a notification for, per
-    /// session id. Tracked independently of `byID` because `pruneStale`
-    /// drops idle/waiting sessions from `byID` after `AgentDeck.staleAfter`
-    /// (1hr) of silence — if the CLI later emits another heartbeat for the
-    /// SAME session_id, `byID[id]` is nil, `previousStatus` looks like a
-    /// brand-new session, and without this map `notifyIfNeeded` would fire a
-    /// second "finished its turn" notification for a turn that ended an hour
-    /// ago. Cleared on an explicit `SessionEnd` so a genuinely new session
-    /// that recycles the same id can notify again, and aged out (on a much
-    /// longer horizon than `byID` itself) in `pruneStale` so a session that
-    /// never gets an explicit `SessionEnd` — e.g. the CLI crashed — can't
-    /// leak an entry here forever.
+    /// session id. This does NOT mean "notify once per session" — it
+    /// suppresses a repeat notification for the SAME status only when no
+    /// intervening work happened, i.e. only until the next transition into
+    /// `.working` (see `apply`, which clears the entry there) or an explicit
+    /// `SessionEnd`. That's what makes it safe: a live session that goes
+    /// idle → working → idle again notifies both times, because the
+    /// `.working` heartbeat in between clears the entry.
+    ///
+    /// It exists as a layer independent of `byID` because `pruneStale` drops
+    /// idle/waiting sessions from `byID` after `AgentDeck.staleAfter` (1hr)
+    /// of silence — if the CLI later emits another heartbeat for the SAME
+    /// session_id with the SAME status (no `.working` in between, since the
+    /// session was pruned precisely because it went quiet), `byID[id]` is
+    /// nil, `previousStatus` looks like a brand-new session, and without
+    /// this map `notifyIfNeeded` would fire a second "finished its turn"
+    /// notification for a turn that ended an hour ago. Cleared on an
+    /// explicit `SessionEnd` so a genuinely new session that recycles the
+    /// same id can notify again, and aged out (on a much longer horizon than
+    /// `byID` itself) in `pruneStale` so a session that never gets an
+    /// explicit `SessionEnd` — e.g. the CLI crashed — can't leak an entry
+    /// here forever.
     private var lastNotified: [String: (status: SessionStatus, at: Date)] = [:]
 
     /// Fires a system notification on attention transitions (see
@@ -109,25 +119,46 @@ final class SessionStore: ObservableObject {
                 hostTTY: event.host_tty
             )
         }
+
+        // A transition into `.working` means real work is happening again —
+        // any stale suppression entry for this id no longer applies. Checked
+        // against the merged/created session's *actual* status (not the
+        // local `status` var) so this applies uniformly to both the
+        // existing-session branch above (where `status` may be nil and the
+        // prior status carries over unchanged) and the new-session branch
+        // (where a nil `status` still resolves to `.working`). See
+        // `lastNotified`'s doc comment for what this suppression layer means.
+        if byID[id]?.status == .working {
+            lastNotified[id] = nil
+        }
+
         rebuild()
         notifyIfNeeded(id: id, previousStatus: previousStatus)
     }
 
-    /// Fires the notifier exactly once per transition INTO an attention
-    /// state (working → idle/waitingApproval, or a brand-new session that
-    /// arrives already in one of those states). Never fires for `.working`,
-    /// and never re-fires while a session stays in the same attention state
+    /// Fires the notifier on each transition INTO an attention state
+    /// (working → idle/waitingApproval, or a brand-new session that arrives
+    /// already in one of those states). Never fires for `.working`, and
+    /// never re-fires while a session stays in the same attention state
     /// across subsequent events (e.g. repeated Notification events while
-    /// still waitingApproval).
+    /// still waitingApproval) — but DOES fire again for a later, separate
+    /// idle/waitingApproval transition once the session has passed back
+    /// through `.working` in between. This is not "once per session, ever":
+    /// a session that finishes its turn multiple times notifies multiple
+    /// times, as long as each finish is preceded by renewed work.
     ///
     /// `previousStatus` (derived from in-memory `byID`) isn't sufficient on
     /// its own: it goes back to nil once `pruneStale` drops the session, so
     /// a later heartbeat for the same session_id looks like a brand-new
     /// session again. The `lastNotified[id]` checks below are an additional
     /// suppression layer on top of the existing transition-once logic — they
-    /// don't change behavior for the normal in-memory case, they only stop a
-    /// duplicate notification from firing after `byID` has forgotten the
-    /// session (see `lastNotified`'s doc comment for why).
+    /// only matter when no `.working` heartbeat has been observed since the
+    /// last notification for this id (see `apply`, which clears the entry on
+    /// every transition into `.working`, and `lastNotified`'s doc comment
+    /// for the full rationale). They don't change behavior for the normal
+    /// in-memory case; they only stop a duplicate notification from firing
+    /// after `byID` has forgotten the session but no genuine new work
+    /// happened.
     private func notifyIfNeeded(id: String, previousStatus: SessionStatus?) {
         guard let session = byID[id] else { return }
         if session.status == .waitingApproval, previousStatus != .waitingApproval,

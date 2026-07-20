@@ -83,15 +83,41 @@ struct GhosttyJumper: TerminalJumper {
     /// difference is tolerated. Kept separate from `focus` rather than
     /// parameterized, since this normalization is specific to directory
     /// paths — the tty tier is a device path and must NOT go through it.
+    ///
+    /// `/tmp`, `/var`, and `/etc` are symlinks into `/private` on macOS, and
+    /// the two sides of this comparison disagree about which spelling to use:
+    /// Foundation's `resolvingSymlinksInPath()` special-cases those three and
+    /// returns the short, "sugared" form (`/tmp/x`, no `/private`), even
+    /// though the fully-resolved path is `/private/tmp/x`. AppleScript's
+    /// `as alias` coercion has no such special case — it always reports the
+    /// fully-resolved long form (`/private/tmp/x`). Left alone, a cwd under
+    /// any of those three roots would normalize to a different string on
+    /// each side and this tier would never match. So — mirroring how
+    /// `focusByTTY` accepts both the bare and `/dev/`-prefixed forms — we
+    /// compute both the plain and `/private`-prefixed spellings of the
+    /// target here and let the script accept either.
     private static func focusByWorkingDirectory(_ cwd: String) -> Bool {
         var target = URL(fileURLWithPath: cwd).resolvingSymlinksInPath().path
         if target.count > 1, target.hasSuffix("/") {
             target.removeLast()
         }
-        let escaped = AppleScriptSupport.escapeForAppleScriptString(target)
+        let privateTarget: String
+        if target.hasPrefix("/private/") || target == "/private" {
+            // Already long-form; don't double-prefix into "/private/private/...".
+            privateTarget = target
+        } else if target == "/tmp" || target.hasPrefix("/tmp/")
+            || target == "/var" || target.hasPrefix("/var/")
+            || target == "/etc" || target.hasPrefix("/etc/") {
+            privateTarget = "/private" + target
+        } else {
+            privateTarget = target
+        }
+        let escapedPlain = AppleScriptSupport.escapeForAppleScriptString(target)
+        let escapedPrivate = AppleScriptSupport.escapeForAppleScriptString(privateTarget)
         let script = """
         tell application "Ghostty"
-            set targetValue to "\(escaped)"
+            set targetPlain to "\(escapedPlain)"
+            set targetPrivate to "\(escapedPrivate)"
             repeat with w in windows
                 repeat with t in tabs of w
                     repeat with tm in terminals of t
@@ -100,7 +126,7 @@ struct GhosttyJumper: TerminalJumper {
                             set tv to working directory of tm
                         end try
                         -- Resolve tv through an alias so a symlinked cwd compares
-                        -- equal to the already-resolved targetValue. Wrapped in a
+                        -- equal to the already-resolved target. Wrapped in a
                         -- `try` so a stale/nonexistent directory can't abort the
                         -- scan — tv just falls back to the raw value.
                         try
@@ -109,7 +135,7 @@ struct GhosttyJumper: TerminalJumper {
                         if tv ends with "/" and tv is not "/" then
                             set tv to text 1 thru -2 of tv
                         end if
-                        if tv is targetValue then
+                        if tv is targetPlain or tv is targetPrivate then
                             focus tm
                             activate
                             return "focused"

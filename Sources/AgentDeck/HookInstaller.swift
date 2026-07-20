@@ -117,6 +117,18 @@ enum HookInstaller {
         PORT="\(port)"
         SUPPORT_DIR="\(supportPath)"
 
+        # Drain the hook's stdin BEFORE any work at all — including the tty
+        # parent-chain walk immediately below, not just the terminal-
+        # detection block that follows it. That walk alone can spawn ~2 `ps`
+        # calls per ancestor (up to ~64 total for a deep pid tree), and the
+        # detection block below it can spawn dozens more. A hook payload
+        # larger than the pipe buffer (64KB) would block the calling CLI's
+        # write() until we get around to reading it, so reading stdin FIRST
+        # — before either piece of work — is what actually keeps this
+        # script's "never blocks the CLI" contract intact. Nothing below
+        # this point re-reads stdin.
+        stdin_json="$(cat)"
+
         # Find the controlling tty of the CLI pane. The hook subprocess itself has
         # NO controlling terminal, so walk up the parent chain until we find one —
         # the CLI process (node/codex) running in the pane holds the pane's tty.
@@ -130,16 +142,6 @@ enum HookInstaller {
           fi
           pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
         done
-
-        # Drain the hook's stdin BEFORE any of the (possibly slow) terminal-
-        # detection work below. That block can spawn dozens of subprocesses
-        # (a tmux list-clients call, plus up to 32 sequential `ps` probes
-        # walking a pid tree), and a hook payload larger than the pipe
-        # buffer would block on write() until we read it — stalling the
-        # calling CLI on every hook event while we're busy detecting. Reading
-        # stdin first is free and removes that stall, keeping this script's
-        # own "never blocks the CLI" contract intact.
-        stdin_json="$(cat)"
 
         # Detect which terminal (or multiplexer) hosts this pane, for the
         # "jump to pane" feature (see TerminalJumpers.swift). Best-effort —
@@ -174,16 +176,22 @@ enum HookInstaller {
           # here — and TmuxJumper later runs `switch-client -c <tty> -t
           # "api"`, which would yank window A off the session the user is
           # actively using and hijack it, instead of raising window B where
-          # this agent actually is. Resolve our pane's session name first so
-          # the lookup is scoped to it; if that fails for any reason, fall
-          # back to the old unscoped lookup rather than losing detection
-          # entirely.
-          tmux_session=""
+          # this agent actually is. We scope by session ID rather than
+          # session NAME: tmux's `-t` target resolution can prefix-match an
+          # unqualified session name (e.g. a lookup for "api" can resolve to
+          # "api-staging" on a server that has both), which would silently
+          # pick clients from the wrong session and reintroduce the exact
+          # hijack this scoping is meant to prevent. Session IDs (e.g. "$3")
+          # are unique and never prefix-match, so `-t "$tmux_session_id"` is
+          # unambiguous by construction. If resolving the ID fails for any
+          # reason, fall back to the old unscoped lookup rather than losing
+          # detection entirely.
+          tmux_session_id=""
           if [ -n "$tmux_pane" ]; then
-            tmux_session="$(tmux display-message -p -t "$tmux_pane" '#{session_name}' 2>/dev/null)"
+            tmux_session_id="$(tmux display-message -p -t "$tmux_pane" '#{session_id}' 2>/dev/null)"
           fi
-          if [ -n "$tmux_session" ]; then
-            client_line="$(tmux list-clients -t "$tmux_session" -F '#{client_pid} #{client_tty} #{client_termname}' 2>/dev/null | head -1)"
+          if [ -n "$tmux_session_id" ]; then
+            client_line="$(tmux list-clients -t "$tmux_session_id" -F '#{client_pid} #{client_tty} #{client_termname}' 2>/dev/null | head -1)"
           else
             client_line="$(tmux list-clients -F '#{client_pid} #{client_tty} #{client_termname}' 2>/dev/null | head -1)"
           fi

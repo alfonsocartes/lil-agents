@@ -17,17 +17,23 @@ struct FallbackJumper: TerminalJumper {
             return
         }
 
-        // Detect by BUNDLE IDENTIFIER first: an exact display-name match would
+        // Detect by BUNDLE IDENTIFIER only: an exact display-name match would
         // skip an iTerm2 nightly/beta or a renamed bundle ("iTerm2 Nightly")
-        // entirely, making the click do nothing. The display names are still
-        // passed as a prefix-match fallback for odd installs. This only widens
-        // what counts as already-running — we still never launch an app.
+        // entirely, making the click do nothing. We deliberately do NOT also
+        // pass `names:` here (see `AppleScriptSupport.isRunning`'s doc
+        // comment) — widening what counts as "already running" is exactly
+        // what can trigger an unwanted downstream launch via `activate`, so
+        // the fuzzier name-prefix match is reserved for names with no known
+        // bundle-id mapping. iTerm2 and Apple Terminal both have one in
+        // `TerminalBundleIDs`, so a `names:` argument here would be inert
+        // anyway: `isRunning` only consults `names` for entries that have no
+        // bundle-id mapping.
         var attempted = false
-        if AppleScriptSupport.isRunning(bundleIDs: [TerminalBundleIDs.iTerm2], names: ["iTerm2", "iTerm"]) {
+        if AppleScriptSupport.isRunning(bundleIDs: [TerminalBundleIDs.iTerm2]) {
             ITermJumper.jump(tty: tty)
             attempted = true
         }
-        if AppleScriptSupport.isRunning(bundleIDs: [TerminalBundleIDs.appleTerminal], names: ["Terminal"]) {
+        if AppleScriptSupport.isRunning(bundleIDs: [TerminalBundleIDs.appleTerminal]) {
             AppleTerminalJumper.jump(tty: tty)
             attempted = true
         }
