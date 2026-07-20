@@ -144,8 +144,12 @@ struct MenuBarContentView: View {
             .padding(.vertical, 18)
         } else {
             VStack(spacing: 2) {
-                ForEach(store.sessions) { session in
-                    SessionRow(session: session, context: .menu) {
+                // Same stable project ordering as the overlay (displayOrdered,
+                // defined in OverlayView.swift) so the two surfaces agree and
+                // the user's spatial memory transfers between them. Status is
+                // still obvious per-row via the dot and the detail line.
+                ForEach(store.sessions.displayOrdered) { session in
+                    SessionRow(session: session) {
                         TerminalJumpers.jump(session.jumpTarget)
                         dismiss()
                     }
