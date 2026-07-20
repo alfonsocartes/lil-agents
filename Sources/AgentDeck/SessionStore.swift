@@ -226,3 +226,16 @@ final class SessionStore: ObservableObject {
         }
     }
 }
+
+#if DEBUG
+extension SessionStore {
+    /// Preview-only: a store pre-seeded with fixed sessions, bypassing the event
+    /// pipeline. Lives in this file so it can reach the file-private `sessions`
+    /// setter. Never compiled into release.
+    static func previewStore(_ sessions: [Session]) -> SessionStore {
+        let store = SessionStore()
+        store.sessions = sessions
+        return store
+    }
+}
+#endif

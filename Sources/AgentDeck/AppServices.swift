@@ -31,7 +31,13 @@ final class AppServices {
     /// Sparkle auto-updater, retained for the app's lifetime.
     let updater = UpdaterController()
 
+    /// The single Settings window controller (lazily creates its NSWindow on
+    /// first `show()`). Lives here — not on `AppDelegate` — so the SwiftUI
+    /// `MenuBarExtra`'s "Settings…" row can reach it directly.
+    let settingsWindow: SettingsWindowController
+
     init() {
         overlay = OverlayController(store: store)
+        settingsWindow = SettingsWindowController(settings: settings)
     }
 }

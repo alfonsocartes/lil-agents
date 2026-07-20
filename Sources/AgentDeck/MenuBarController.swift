@@ -2,6 +2,11 @@ import AppKit
 import Combine
 import Sparkle
 
+// NOTE: Currently UNWIRED. As of the MenuBarExtra swap, the menu-bar presence is
+// the SwiftUI `MenuBarExtra` scene in `AgentDeckApp` + `MenuBarContentView`;
+// `AppDelegate` no longer constructs this controller. The file is kept in-tree,
+// compiling, as the rollback path — deletion happens in a later phase.
+
 /// The menu bar presence for lil agents: a status item whose icon color reflects
 /// whether any session is waiting for the user, plus a menu listing the sessions
 /// and controls for the floating overlay.

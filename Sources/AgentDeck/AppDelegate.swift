@@ -14,9 +14,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var listener: EventListener?
     private var notifier: Notifier?
 
-    private var menuBar: MenuBarController?
-    private var settingsWindow: SettingsWindowController?
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu-bar-less, Dock-less agent app: the only surfaces are the status
         // item and the floating overlay. `LSUIElement` covers the bundled app,
@@ -72,20 +69,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // OverlayController builds the panel lazily, here on first show.
         services.overlay.show()
 
-        // Settings window (notification preferences). Retained for the app's
-        // lifetime; lazily creates its NSWindow on first show().
-        let settingsWindow = SettingsWindowController(settings: services.settings)
-        self.settingsWindow = settingsWindow
-
-        // Menu bar presence: color-changing icon + session menu. Kept alongside
-        // the floating overlay (the user wants both surfaces).
-        menuBar = MenuBarController(
-            store: store,
-            awake: services.awake,
-            overlay: services.overlay,
-            updaterController: services.updater.controller,
-            onOpenSettings: { [weak self] in self?.settingsWindow?.show() }
-        )
+        // The menu bar presence is now the SwiftUI `MenuBarExtra` scene in
+        // `AgentDeckApp` (status icon + session dropdown). The legacy
+        // `MenuBarController` (NSStatusItem/NSMenu) is intentionally no longer
+        // constructed here — see its file header. The Settings window it used
+        // to drive now lives on `AppServices` (`services.settingsWindow`).
 
         // Ask for notification permission once at launch. NSLog reports the
         // outcome; harmless to call on every launch — the system only

@@ -1,19 +1,35 @@
 import SwiftUI
 
-/// SwiftUI entry point. All real setup still happens in `AppDelegate` — this
-/// type exists to own the app lifecycle so later phases can add SwiftUI scenes
-/// (a `MenuBarExtra`, a `Settings` window) without a manual `NSApplication`
-/// bootstrap.
+/// SwiftUI entry point. Core setup (listener, hotkey, hooks, overlay) still
+/// happens in `AppDelegate`; the menu-bar presence is now the SwiftUI
+/// `MenuBarExtra` scene below — the first surface of the AppKit→SwiftUI
+/// migration.
 ///
-/// The `Settings` scene is a placeholder: a `Settings` scene creates no window
-/// until it is explicitly opened, so this adds no user-visible surface today.
-/// (The existing AppKit `SettingsWindowController` still owns the real Settings
-/// window; a later phase replaces it.)
+/// The objects handed to the scene come from `appDelegate.services`, a stored
+/// property that exists before `applicationDidFinishLaunching`: a `MenuBarExtra`
+/// renders its label as soon as the scene is built, so the store/overlay/awake
+/// it observes must already exist. Re-creating them here as `@StateObject`
+/// would fork a second `SessionStore` from the one the listener writes into and
+/// the menu would render empty.
 @main
 struct AgentDeckApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Settings { EmptyView() }
+        MenuBarExtra {
+            MenuBarContentView(
+                store: appDelegate.services.store,
+                awake: appDelegate.services.awake,
+                overlay: appDelegate.services.overlay,
+                onOpenSettings: { appDelegate.services.settingsWindow.show() },
+                onCheckForUpdates: { appDelegate.services.updater.controller.checkForUpdates(nil) }
+            )
+        } label: {
+            StatusIconLabel(
+                store: appDelegate.services.store,
+                awake: appDelegate.services.awake
+            )
+        }
+        .menuBarExtraStyle(.window)
     }
 }
