@@ -1,12 +1,13 @@
 import Foundation
-import Combine
+import Observation
 
 /// Holds the set of live sessions and applies incoming hook events to drive
 /// each session's status. Main-actor bound — the UI observes it directly.
 @MainActor
-final class SessionStore: ObservableObject {
+@Observable
+final class SessionStore {
     /// Sessions sorted for display: attention-needing first, then working, then idle.
-    @Published private(set) var sessions: [Session] = []
+    private(set) var sessions: [Session] = []
 
     private var byID: [String: Session] = [:]
     private var pruneTimer: Timer?

@@ -5,7 +5,7 @@ import AppKit
 /// Title, hotkey hint, count, ⋯ menu and the stay-awake toggle were intentionally
 /// removed — those controls live in the menu bar now. This is a pure glance target.
 struct OverlayView: View {
-    @ObservedObject var store: SessionStore
+    let store: SessionStore
 
     var body: some View {
         Group {

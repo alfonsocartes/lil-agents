@@ -18,9 +18,9 @@ import SwiftUI
 /// with aligned icon columns, richer session rows, and clearer on/off
 /// affordances than the legacy NSMenu.
 struct MenuBarContentView: View {
-    @ObservedObject var store: SessionStore
-    @ObservedObject var awake: StayAwakeController
-    @ObservedObject var overlay: OverlayController
+    let store: SessionStore
+    let awake: StayAwakeController
+    let overlay: OverlayController
     @ObservedObject var updater: UpdaterController
 
     /// Opens the existing AppKit Settings window (SettingsWindowController).
@@ -173,8 +173,8 @@ struct MenuBarContentView: View {
 /// would be recolored by the menu bar). Falls back to a plain SF Symbol if the
 /// NSImage is ever nil.
 struct StatusIconLabel: View {
-    @ObservedObject var store: SessionStore
-    @ObservedObject var awake: StayAwakeController
+    let store: SessionStore
+    let awake: StayAwakeController
 
     var body: some View {
         if let image = AttentionIcon.image(attention: store.attention, isAwake: awake.isAwake) {

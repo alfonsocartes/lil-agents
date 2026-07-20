@@ -12,6 +12,12 @@ import Sparkle
 /// already in flight or unavailable. `canCheckForUpdates` mirrors Sparkle's
 /// own `SPUUpdater.canCheckForUpdates` KVO property via the documented
 /// Combine bridge so a SwiftUI row can `.disabled(!updater.canCheckForUpdates)`.
+///
+/// Deliberately NOT migrated to `@Observable`: `canCheckForUpdates` is fed by
+/// Sparkle's KVO publisher via `assign(to: &$canCheckForUpdates)`, which is a
+/// Combine `@Published` projection with no `@Observable` equivalent. Rebuilding
+/// that bridge (e.g. hand-rolled KVO observation) would buy nothing here, so
+/// this one class stays on `ObservableObject`.
 @MainActor
 final class UpdaterController: ObservableObject {
     let controller: SPUStandardUpdaterController

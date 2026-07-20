@@ -1,20 +1,21 @@
 import AppKit
-import Combine
+import Observation
 import SwiftUI
 
 /// Owns the floating overlay panel and publishes its visibility.
 ///
 /// Visibility used to be read back from `panel.isVisible` through a closure at
 /// `menuNeedsUpdate` time — pull-based, which only works because `NSMenu`
-/// rebuilds itself on every open. `@Published isVisible` is push-based, so a
+/// rebuilds itself on every open. `@Observable isVisible` is push-based, so a
 /// SwiftUI menu can observe it directly.
 ///
 /// The panel is built lazily on first `show()` and exactly once: ordering a
 /// window front while the app delegate is still being constructed is flaky.
 @MainActor
-final class OverlayController: ObservableObject {
+@Observable
+final class OverlayController {
     /// Whether the overlay panel is currently on screen.
-    @Published private(set) var isVisible: Bool = false
+    private(set) var isVisible: Bool = false
 
     private let store: SessionStore
     private var panel: FloatingPanel<OverlayView>?

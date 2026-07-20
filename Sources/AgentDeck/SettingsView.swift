@@ -4,7 +4,7 @@ import SwiftUI
 /// to `AppSettings`. Compact by design — this app has exactly one settings
 /// surface, no tabs/sidebar needed.
 struct SettingsView: View {
-    @ObservedObject var settings: AppSettings
+    @Bindable var settings: AppSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
