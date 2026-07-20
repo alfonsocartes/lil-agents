@@ -11,6 +11,20 @@ final class SessionStore: ObservableObject {
     private var byID: [String: Session] = [:]
     private var pruneTimer: Timer?
 
+    /// Last attention-state we actually fired a notification for, per
+    /// session id. Tracked independently of `byID` because `pruneStale`
+    /// drops idle/waiting sessions from `byID` after `AgentDeck.staleAfter`
+    /// (1hr) of silence — if the CLI later emits another heartbeat for the
+    /// SAME session_id, `byID[id]` is nil, `previousStatus` looks like a
+    /// brand-new session, and without this map `notifyIfNeeded` would fire a
+    /// second "finished its turn" notification for a turn that ended an hour
+    /// ago. Cleared on an explicit `SessionEnd` so a genuinely new session
+    /// that recycles the same id can notify again, and aged out (on a much
+    /// longer horizon than `byID` itself) in `pruneStale` so a session that
+    /// never gets an explicit `SessionEnd` — e.g. the CLI crashed — can't
+    /// leak an entry here forever.
+    private var lastNotified: [String: (status: SessionStatus, at: Date)] = [:]
+
     /// Fires a system notification on attention transitions (see
     /// `notifyIfNeeded` below). Optional so SessionStore carries no hard
     /// dependency on UserNotifications (e.g. for tests) — AppDelegate wires
@@ -42,6 +56,10 @@ final class SessionStore: ObservableObject {
         switch event.event {
         case "SessionEnd":
             byID[id] = nil
+            // A genuinely new session can reuse this id later — clear the
+            // notify-suppression entry too so it can notify again (see
+            // `lastNotified`'s doc comment above).
+            lastNotified[id] = nil
             rebuild()
             return
         case "SubagentStop":
@@ -101,12 +119,25 @@ final class SessionStore: ObservableObject {
     /// and never re-fires while a session stays in the same attention state
     /// across subsequent events (e.g. repeated Notification events while
     /// still waitingApproval).
+    ///
+    /// `previousStatus` (derived from in-memory `byID`) isn't sufficient on
+    /// its own: it goes back to nil once `pruneStale` drops the session, so
+    /// a later heartbeat for the same session_id looks like a brand-new
+    /// session again. The `lastNotified[id]` checks below are an additional
+    /// suppression layer on top of the existing transition-once logic — they
+    /// don't change behavior for the normal in-memory case, they only stop a
+    /// duplicate notification from firing after `byID` has forgotten the
+    /// session (see `lastNotified`'s doc comment for why).
     private func notifyIfNeeded(id: String, previousStatus: SessionStatus?) {
         guard let session = byID[id] else { return }
-        if session.status == .waitingApproval, previousStatus != .waitingApproval {
+        if session.status == .waitingApproval, previousStatus != .waitingApproval,
+           lastNotified[id]?.status != .waitingApproval {
             notifier?.notify(session: session, reason: .approval)
-        } else if session.status == .idle, previousStatus != .idle {
+            lastNotified[id] = (status: .waitingApproval, at: Date())
+        } else if session.status == .idle, previousStatus != .idle,
+                  lastNotified[id]?.status != .idle {
             notifier?.notify(session: session, reason: .idle)
+            lastNotified[id] = (status: .idle, at: Date())
         }
     }
 
@@ -138,6 +169,15 @@ final class SessionStore: ObservableObject {
         let before = byID.count
         byID = byID.filter { $0.value.lastUpdate >= cutoff }
         if byID.count != before { rebuild() }
+
+        // Bound `lastNotified`'s growth for sessions that never get an
+        // explicit SessionEnd (e.g. the CLI crashed). Use a much longer
+        // horizon than `byID`'s own staleAfter so the "heartbeat arrives
+        // after byID already pruned it" suppression case above keeps
+        // working across realistic gaps, while still guaranteeing this map
+        // can't grow unboundedly over a long-running AgentDeck process.
+        let notifiedCutoff = Date().addingTimeInterval(-AgentDeck.staleAfter * 24)
+        lastNotified = lastNotified.filter { $0.value.at >= notifiedCutoff }
     }
 
     private func rebuild() {

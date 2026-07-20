@@ -59,8 +59,10 @@ enum AppleScriptSupport {
     static func activate(candidates: [String], label: String) {
         // `tell application "X" to activate` LAUNCHES X if it isn't running and
         // reports success, so a stale/misdetected name could spawn an unwanted
-        // app. Only activate a candidate that is already running.
-        guard isRunning(anyOf: candidates) else {
+        // app. Only activate a candidate that is already running. The check
+        // goes through the bundle-id-aware path so a nightly/beta/renamed
+        // bundle ("iTerm2 Nightly") isn't mistaken for "not running".
+        guard isRunning(bundleIDs: TerminalBundleIDs.forDisplayNames(candidates), names: candidates) else {
             NSLog("\(label): none of \(candidates) is running; skipping activate")
             return
         }
@@ -71,12 +73,56 @@ enum AppleScriptSupport {
         NSLog("\(label): failed to activate any of \(candidates)")
     }
 
-    /// True if any currently-running app's localized name case-insensitively
-    /// matches one of `candidates`. Read-only; safe to call off the main thread.
-    static func isRunning(anyOf candidates: [String]) -> Bool {
-        let names = NSWorkspace.shared.runningApplications.compactMap { $0.localizedName }
-        return candidates.contains { candidate in
-            names.contains { $0.caseInsensitiveCompare(candidate) == .orderedSame }
+    /// True if any currently-running app matches either
+    ///   - one of `bundleIDs` (case-insensitive exact match — the reliable
+    ///     signal, since the bundle identifier is stable across renames,
+    ///     nightlies and betas), or
+    ///   - one of `names` as a case-insensitive PREFIX of the app's localized
+    ///     name, so "iTerm2 Nightly" still matches the "iTerm2" candidate.
+    ///
+    /// Read-only; safe to call off the main thread. Callers rely on this to
+    /// avoid LAUNCHING an app that isn't running — a prefix match can only
+    /// widen what we recognize as already-running, never cause a launch.
+    static func isRunning(bundleIDs: [String], names: [String] = []) -> Bool {
+        let apps = NSWorkspace.shared.runningApplications
+        for app in apps {
+            if let id = app.bundleIdentifier,
+               bundleIDs.contains(where: { $0.caseInsensitiveCompare(id) == .orderedSame }) {
+                return true
+            }
+            if let localized = app.localizedName,
+               names.contains(where: { localized.lowercased().hasPrefix($0.lowercased()) }) {
+                return true
+            }
         }
+        return false
+    }
+}
+
+/// Bundle identifiers for the terminals we drive. Matching on these rather
+/// than on display names is what makes the running-check survive nightly and
+/// beta builds, renamed bundles, and localized app names.
+enum TerminalBundleIDs {
+    static let iTerm2 = "com.googlecode.iterm2"
+    static let appleTerminal = "com.apple.Terminal"
+    static let wezterm = "com.github.wez.wezterm"
+    static let ghostty = "com.mitchellh.ghostty"
+
+    /// Maps the display names callers already pass around (e.g. ["iTerm2",
+    /// "iTerm"]) onto the bundle ids above, so `activate` can do the reliable
+    /// check without every call site changing its signature. Unknown names
+    /// simply contribute no id and fall back to the name prefix match.
+    static func forDisplayNames(_ names: [String]) -> [String] {
+        var ids: [String] = []
+        for name in names {
+            switch name.lowercased() {
+            case "iterm", "iterm2": ids.append(iTerm2)
+            case "terminal":        ids.append(appleTerminal)
+            case "wezterm":         ids.append(wezterm)
+            case "ghostty":         ids.append(ghostty)
+            default:                break
+            }
+        }
+        return ids
     }
 }

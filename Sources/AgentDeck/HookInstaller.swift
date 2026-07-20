@@ -131,6 +131,16 @@ enum HookInstaller {
           pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
         done
 
+        # Drain the hook's stdin BEFORE any of the (possibly slow) terminal-
+        # detection work below. That block can spawn dozens of subprocesses
+        # (a tmux list-clients call, plus up to 32 sequential `ps` probes
+        # walking a pid tree), and a hook payload larger than the pipe
+        # buffer would block on write() until we read it — stalling the
+        # calling CLI on every hook event while we're busy detecting. Reading
+        # stdin first is free and removes that stall, keeping this script's
+        # own "never blocks the CLI" contract intact.
+        stdin_json="$(cat)"
+
         # Detect which terminal (or multiplexer) hosts this pane, for the
         # "jump to pane" feature (see TerminalJumpers.swift). Best-effort —
         # an unrecognized environment just leaves everything below empty and
@@ -155,7 +165,28 @@ enum HookInstaller {
           # to this session, so a jump can also raise ITS window. Takes the
           # FIRST attached client — good enough for the common single-client
           # case.
-          client_line="$(tmux list-clients -F '#{client_pid} #{client_tty} #{client_termname}' 2>/dev/null | head -1)"
+          #
+          # Scope the lookup to THIS pane's session. `tmux list-clients`
+          # WITHOUT `-t` lists clients attached to ANY session on the whole
+          # tmux server, not just this one. With two terminal windows on one
+          # server (e.g. window A on session "work", window B on session
+          # "api"), a hook from "api" could pick up window A's client/tty
+          # here — and TmuxJumper later runs `switch-client -c <tty> -t
+          # "api"`, which would yank window A off the session the user is
+          # actively using and hijack it, instead of raising window B where
+          # this agent actually is. Resolve our pane's session name first so
+          # the lookup is scoped to it; if that fails for any reason, fall
+          # back to the old unscoped lookup rather than losing detection
+          # entirely.
+          tmux_session=""
+          if [ -n "$tmux_pane" ]; then
+            tmux_session="$(tmux display-message -p -t "$tmux_pane" '#{session_name}' 2>/dev/null)"
+          fi
+          if [ -n "$tmux_session" ]; then
+            client_line="$(tmux list-clients -t "$tmux_session" -F '#{client_pid} #{client_tty} #{client_termname}' 2>/dev/null | head -1)"
+          else
+            client_line="$(tmux list-clients -F '#{client_pid} #{client_tty} #{client_termname}' 2>/dev/null | head -1)"
+          fi
           if [ -n "$client_line" ]; then
             client_pid="$(printf '%s' "$client_line" | awk '{print $1}')"
             client_tty_raw="$(printf '%s' "$client_line" | awk '{print $2}')"
@@ -216,8 +247,6 @@ enum HookInstaller {
           wezterm_socket="${WEZTERM_UNIX_SOCKET:-}"
           wezterm_exe="${WEZTERM_EXECUTABLE:-}"
         fi
-
-        stdin_json="$(cat)"
 
         json="$(printf '%s' "$stdin_json" | \\
           AGENTDECK_TERMINAL="$terminal" \\

@@ -11,7 +11,11 @@ import Foundation
 struct TmuxJumper: TerminalJumper {
     func jump(_ target: JumpTarget) {
         guard let pane = target.tmuxPane, !pane.isEmpty else {
-            NSLog("TmuxJumper: no tmux_pane for session (cwd=\(target.cwd ?? "nil")); skipping jump")
+            // Without a pane id we can't select the right pane — but bailing
+            // outright would make the click a total no-op. Raising the host
+            // window is still strictly useful, so do that much.
+            NSLog("TmuxJumper: no tmux_pane for session (cwd=\(target.cwd ?? "nil")); skipping pane focus, still raising host window")
+            Self.raiseHost(target)
             return
         }
         let socketArgs: [String] = (target.tmuxSocket?.isEmpty == false) ? ["-S", target.tmuxSocket!] : []
@@ -71,8 +75,15 @@ struct TmuxJumper: TerminalJumper {
     @discardableResult
     private static func runTmux(_ args: [String], quiet: Bool = false) -> String? {
         // Resolve tmux to an absolute path: the app's launchd PATH excludes
-        // Homebrew/MacPorts, so `/usr/bin/env tmux` would not find it.
-        let tmux = ExecutableResolver.resolve("tmux")
+        // Homebrew/MacPorts, so `/usr/bin/env tmux` would not find it. A nil
+        // result means tmux really isn't installed anywhere we can see, and
+        // there is nothing sensible left to spawn — say so once per command
+        // instead of failing silently. (Not gated by `quiet`: `quiet` is for
+        // routine tmux-level no-ops, whereas a missing binary is actionable.)
+        guard let tmux = ExecutableResolver.resolve("tmux") else {
+            NSLog("TmuxJumper: tmux not found in PATH or standard install locations; cannot jump")
+            return nil
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: tmux)
         process.arguments = args

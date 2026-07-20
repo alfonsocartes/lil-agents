@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import UserNotifications
 
@@ -103,6 +104,24 @@ extension Notifier: UNUserNotificationCenterDelegate {
         Task { @MainActor in
             if let sessionID, let session = self.sessionLookup(sessionID) {
                 TerminalJumpers.jump(session.jumpTarget)
+            } else {
+                // The session is gone by the time the tap arrives — either
+                // SessionEnd removed it right away, or `pruneStale` dropped
+                // it after an hour of silence. Idle/waiting sessions are
+                // exactly the long-lived ones a user comes back to after a
+                // while, so this is the common case, not an edge case: a
+                // silent no-op here would make the tap look broken. Log the
+                // miss (diagnosable via Console) and at least bring the app
+                // forward so the tap visibly does something.
+                //
+                // Notifier only has `sessionLookup` and `settings` to work
+                // with — it has no reference to AppDelegate's floating panel
+                // or MenuBarController, so it can't reveal the overlay
+                // itself without threading one through from outside. Falling
+                // back to activating the app is the best available response
+                // without touching other files.
+                NSLog("AgentDeck: notification tap for missing session id \(sessionID ?? "<nil>") — session already ended or was pruned")
+                NSApp.activate(ignoringOtherApps: true)
             }
             completionHandler()
         }

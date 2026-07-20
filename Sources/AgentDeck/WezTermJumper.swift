@@ -10,10 +10,14 @@ import Foundation
 struct WezTermJumper: TerminalJumper {
     func jump(_ target: JumpTarget) {
         // Resolve to an absolute path: prefer the WEZTERM_EXECUTABLE the
-        // forwarder captured, else search the common install locations. The
-        // app's launchd PATH excludes Homebrew, so a bare "wezterm" run via
-        // /usr/bin/env would not be found.
-        let exe = ExecutableResolver.resolve("wezterm", hint: target.weztermExe)
+        // forwarder captured (only if it clears ExecutableResolver's trust
+        // checks — it is untrusted event data), else search the common install
+        // locations. The app's launchd PATH excludes Homebrew, so a bare
+        // "wezterm" run via /usr/bin/env would not be found.
+        guard let exe = ExecutableResolver.resolve("wezterm", hint: target.weztermExe) else {
+            NSLog("WezTermJumper: wezterm not found in PATH or standard install locations; cannot jump")
+            return
+        }
         var env = ProcessInfo.processInfo.environment
         if let socket = target.weztermSocket, !socket.isEmpty {
             env["WEZTERM_UNIX_SOCKET"] = socket
@@ -24,17 +28,26 @@ struct WezTermJumper: TerminalJumper {
             paneID = Self.resolvePaneID(exe: exe, env: env, tty: target.tty)
         }
 
-        if let paneID, !paneID.isEmpty {
-            let result = Self.run(exe: exe, args: ["cli", "activate-pane", "--pane-id", paneID], env: env)
-            if result.status != 0 {
-                NSLog("WezTermJumper: activate-pane --pane-id \(paneID) failed: \(result.err)")
-            }
-        } else {
-            NSLog("WezTermJumper: no pane id resolvable for tty=\(target.tty ?? "nil"); activating app only")
+        guard let paneID, !paneID.isEmpty else {
+            // No pane id (stale/closed pane, or the tty lookup found nothing).
+            // Activating WezTerm here would yank it to the front onto whatever
+            // arbitrary pane happens to be focused, which is not what the user
+            // clicked on — better to leave their focus untouched.
+            NSLog("WezTermJumper: no pane id resolvable for tty=\(target.tty ?? "nil"); leaving focus untouched")
+            return
+        }
+
+        let result = Self.run(exe: exe, args: ["cli", "activate-pane", "--pane-id", paneID], env: env)
+        guard result.status == 0 else {
+            // Same reasoning: if we couldn't focus the right pane inside
+            // WezTerm, raising the app would land the user somewhere random.
+            NSLog("WezTermJumper: activate-pane --pane-id \(paneID) failed: \(result.err); leaving focus untouched")
+            return
         }
 
         // Belt-and-suspenders: activate-pane focuses the pane within WezTerm,
-        // but doesn't necessarily bring the app itself to the front.
+        // but doesn't necessarily bring the app itself to the front. Only
+        // reached once we know the correct pane is selected.
         AppleScriptSupport.activate(candidates: ["WezTerm"], label: "WezTermJumper")
     }
 

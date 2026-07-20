@@ -21,7 +21,7 @@ import Foundation
 /// consent prompt for controlling Ghostty (same as iTerm2).
 struct GhosttyJumper: TerminalJumper {
     func jump(_ target: JumpTarget) {
-        if let tty = target.tty, !tty.isEmpty, Self.focus(property: "tty", equals: tty) {
+        if let tty = target.tty, !tty.isEmpty, Self.focusByTTY(tty) {
             return
         }
         if let cwd = target.cwd, !cwd.isEmpty, Self.focusByWorkingDirectory(cwd) {
@@ -30,28 +30,38 @@ struct GhosttyJumper: TerminalJumper {
         AppleScriptSupport.activate(candidates: ["Ghostty"], label: "GhosttyJumper")
     }
 
-    /// Scans windows→tabs→terminals for a terminal whose `property` equals
-    /// `value` and focuses it. Returns true iff the script ran cleanly and
-    /// reported "focused". Reading the property is wrapped in a `try` so one
-    /// odd terminal (or a Ghostty version that doesn't know the property at
-    /// all) can't abort the scan — it just yields "nomatch"/an error, which
-    /// we treat as silent no-match. `focus` raises the terminal's window
-    /// within Ghostty but doesn't reliably bring the Ghostty app itself
-    /// forward over other apps, so `activate` follows it (mirrors
-    /// `ITermJumper`, which does the same after selecting its match).
-    private static func focus(property: String, equals value: String) -> Bool {
-        let escaped = AppleScriptSupport.escapeForAppleScriptString(value)
+    /// Scans windows→tabs→terminals for a terminal whose `tty` matches and
+    /// focuses it. Returns true iff the script ran cleanly and reported
+    /// "focused". Reading the property is wrapped in a `try` so one odd
+    /// terminal (or a Ghostty version that doesn't know `tty` at all) can't
+    /// abort the scan — it just yields "nomatch"/an error, which we treat as
+    /// silent no-match. `focus` raises the terminal's window within Ghostty
+    /// but doesn't reliably bring the Ghostty app itself forward over other
+    /// apps, so `activate` follows it (mirrors `ITermJumper`, which does the
+    /// same after selecting its match).
+    ///
+    /// Terminals disagree about whether a tty is reported as `/dev/ttys004` or
+    /// the bare `ttys004` (the same reason `WezTermJumper` has `normalizeTTY`),
+    /// and we don't know which form this Ghostty build uses. So we compute both
+    /// forms here and let the script accept either — otherwise a mismatch in
+    /// form alone would make the precise tty tier never match, silently
+    /// degrading every jump to the coarser cwd tier.
+    private static func focusByTTY(_ tty: String) -> Bool {
+        let bare = tty.hasPrefix("/dev/") ? String(tty.dropFirst("/dev/".count)) : tty
+        let escapedFull = AppleScriptSupport.escapeForAppleScriptString("/dev/" + bare)
+        let escapedBare = AppleScriptSupport.escapeForAppleScriptString(bare)
         let script = """
         tell application "Ghostty"
-            set targetValue to "\(escaped)"
+            set targetFull to "\(escapedFull)"
+            set targetBare to "\(escapedBare)"
             repeat with w in windows
                 repeat with t in tabs of w
                     repeat with tm in terminals of t
                         set tv to ""
                         try
-                            set tv to \(property) of tm
+                            set tv to tty of tm
                         end try
-                        if tv is targetValue then
+                        if tv is not "" and (tv is targetFull or tv is targetBare) then
                             focus tm
                             activate
                             return "focused"
@@ -66,7 +76,7 @@ struct GhosttyJumper: TerminalJumper {
         return status == 0 && out == "focused"
     }
 
-    /// Same scan as `focus(property:equals:)`, specialized for the cwd tier:
+    /// Same scan as `focusByTTY`, specialized for the cwd tier:
     /// both sides of the comparison are symlink-resolved so a session whose
     /// cwd is a symlink (e.g. `~/Source` -> `/Volumes/...`) still matches
     /// Ghostty's resolved `working directory`, and a trailing-slash
