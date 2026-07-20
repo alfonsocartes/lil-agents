@@ -118,6 +118,17 @@ enum ExecutableResolver {
     private static var loggedRejectedHints: Set<String> = []
     private static let maxLoggedRejectedHints = 100
 
+    /// Test seam: clears the process-lifetime memoization (`cache`) and the
+    /// rejected-hint log dedup set under the same lock production uses, so one
+    /// test's resolve/reject outcomes can't leak into the next. No production
+    /// code path calls this.
+    internal static func _resetCacheForTesting() {
+        cacheLock.lock()
+        cache.removeAll()
+        loggedRejectedHints.removeAll()
+        cacheLock.unlock()
+    }
+
     /// Returns the absolute path to `name`, or nil if it genuinely can't be
     /// found anywhere we're willing to execute from.
     static func resolve(_ name: String, hint: String? = nil) -> String? {
@@ -186,7 +197,10 @@ enum ExecutableResolver {
     /// against `trustedPrefixes`, but if the caller went on to execute the
     /// original (possibly-symlink) `hint`, the symlink could be retargeted at
     /// an untrusted path in the window between this check and `Process.run`.
-    private static func isTrustedHint(_ hint: String, name: String) -> String? {
+    // `internal` (not `private`) so tests can validate this boundary directly:
+    // it is pure given the filesystem, so tests exercise it with real temp
+    // files/symlinks under scratch dirs without spawning a login shell.
+    internal static func isTrustedHint(_ hint: String, name: String) -> String? {
         guard hint.hasPrefix("/") else { return nil }
         guard FileManager.default.isExecutableFile(atPath: hint) else { return nil }
 

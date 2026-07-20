@@ -76,6 +76,33 @@ struct GhosttyJumper: TerminalJumper {
         return status == 0 && out == "focused"
     }
 
+    /// Pure path-normalization extracted from `focusByWorkingDirectory` so it
+    /// can be unit-tested without running any AppleScript. Symlink-resolves the
+    /// cwd (Foundation's `resolvingSymlinksInPath()` returns the "sugared"
+    /// short form for `/tmp`, `/var`, `/etc`), trims a trailing slash, and
+    /// computes the `/private`-prefixed long form the way AppleScript's `as
+    /// alias` reports it — while guarding against double-prefixing a path that
+    /// is already under `/private`. Behavior is identical to the inline logic
+    /// it replaced.
+    internal static func normalizedCWDVariants(_ cwd: String) -> (plain: String, privatePath: String) {
+        var target = URL(fileURLWithPath: cwd).resolvingSymlinksInPath().path
+        if target.count > 1, target.hasSuffix("/") {
+            target.removeLast()
+        }
+        let privateTarget: String
+        if target.hasPrefix("/private/") || target == "/private" {
+            // Already long-form; don't double-prefix into "/private/private/...".
+            privateTarget = target
+        } else if target == "/tmp" || target.hasPrefix("/tmp/")
+            || target == "/var" || target.hasPrefix("/var/")
+            || target == "/etc" || target.hasPrefix("/etc/") {
+            privateTarget = "/private" + target
+        } else {
+            privateTarget = target
+        }
+        return (plain: target, privatePath: privateTarget)
+    }
+
     /// Same scan as `focusByTTY`, specialized for the cwd tier:
     /// both sides of the comparison are symlink-resolved so a session whose
     /// cwd is a symlink (e.g. `~/Source` -> `/Volumes/...`) still matches
@@ -97,23 +124,9 @@ struct GhosttyJumper: TerminalJumper {
     /// compute both the plain and `/private`-prefixed spellings of the
     /// target here and let the script accept either.
     private static func focusByWorkingDirectory(_ cwd: String) -> Bool {
-        var target = URL(fileURLWithPath: cwd).resolvingSymlinksInPath().path
-        if target.count > 1, target.hasSuffix("/") {
-            target.removeLast()
-        }
-        let privateTarget: String
-        if target.hasPrefix("/private/") || target == "/private" {
-            // Already long-form; don't double-prefix into "/private/private/...".
-            privateTarget = target
-        } else if target == "/tmp" || target.hasPrefix("/tmp/")
-            || target == "/var" || target.hasPrefix("/var/")
-            || target == "/etc" || target.hasPrefix("/etc/") {
-            privateTarget = "/private" + target
-        } else {
-            privateTarget = target
-        }
-        let escapedPlain = AppleScriptSupport.escapeForAppleScriptString(target)
-        let escapedPrivate = AppleScriptSupport.escapeForAppleScriptString(privateTarget)
+        let variants = normalizedCWDVariants(cwd)
+        let escapedPlain = AppleScriptSupport.escapeForAppleScriptString(variants.plain)
+        let escapedPrivate = AppleScriptSupport.escapeForAppleScriptString(variants.privatePath)
         let script = """
         tell application "Ghostty"
             set targetPlain to "\(escapedPlain)"

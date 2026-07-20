@@ -29,6 +29,15 @@ let package = Package(
                     "-Xlinker", "@executable_path/../Frameworks",
                 ])
             ]
+        ),
+        .testTarget(
+            name: "AgentDeckTests",
+            dependencies: ["AgentDeck"],
+            path: "tests/AgentDeckTests",
+            swiftSettings: [
+                // Match the main target's language mode (6b flips both).
+                .swiftLanguageMode(.v5)
+            ]
         )
     ]
 )

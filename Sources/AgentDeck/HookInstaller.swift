@@ -17,8 +17,15 @@ enum HookInstaller {
 
     // MARK: - Paths
 
+    /// Test seam: redirects the home directory that every hook-config path is
+    /// computed from. Default `nil` → the real `homeDirectoryForCurrentUser`,
+    /// so production behavior is byte-for-byte unchanged. Tests set this to a
+    /// temp dir so install/uninstall never read or mutate the developer's real
+    /// `~/.claude/settings.json` or `~/.codex/hooks.json`.
+    internal static var homeDirectoryOverride: URL?
+
     private static var homeDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        homeDirectoryOverride ?? FileManager.default.homeDirectoryForCurrentUser
     }
 
     private static var claudeSettingsURL: URL {
@@ -451,7 +458,8 @@ enum HookInstaller {
 
     /// Returns `existing` (an `Any?` expected to be `[[String: Any]]`) with a group
     /// added for `command`, unless a group already contains that exact command.
-    private static func mergedGroups(_ existing: Any?, adding command: String, matcher: String = "") -> [[String: Any]] {
+    // `internal` (not `private`) so unit tests can exercise the pure merge logic directly.
+    internal static func mergedGroups(_ existing: Any?, adding command: String, matcher: String = "") -> [[String: Any]] {
         var groups = existing as? [[String: Any]] ?? []
         let alreadyPresent = groups.contains { group in
             let entries = group["hooks"] as? [[String: Any]] ?? []
@@ -468,7 +476,8 @@ enum HookInstaller {
     /// script path (catching stale/broken variants — e.g. the old unquoted command
     /// that the shell mis-split), then appends the one correct `command`. Foreign
     /// hooks (whose command doesn't contain our script path) are left untouched.
-    private static func upsertGroups(_ existing: Any?, command: String, matcher: String = "") -> [[String: Any]] {
+    // `internal` (not `private`) so unit tests can exercise the pure merge logic directly.
+    internal static func upsertGroups(_ existing: Any?, command: String, matcher: String = "") -> [[String: Any]] {
         let scriptPath = forwarderScriptURL.path
         var groups = (existing as? [[String: Any]] ?? []).compactMap { group -> [String: Any]? in
             guard var entries = group["hooks"] as? [[String: Any]] else { return group }
@@ -484,7 +493,8 @@ enum HookInstaller {
 
     /// Returns `existing` with any hook entry matching `command` removed, dropping
     /// matcher-groups that become empty as a result.
-    private static func prunedGroups(_ existing: Any?, removing command: String) -> [[String: Any]] {
+    // `internal` (not `private`) so unit tests can exercise the pure prune logic directly.
+    internal static func prunedGroups(_ existing: Any?, removing command: String) -> [[String: Any]] {
         let groups = existing as? [[String: Any]] ?? []
         return groups.compactMap { group -> [String: Any]? in
             guard var entries = group["hooks"] as? [[String: Any]] else { return group }

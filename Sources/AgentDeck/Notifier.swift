@@ -2,6 +2,16 @@ import AppKit
 import Foundation
 import UserNotifications
 
+/// The seam SessionStore fires notifications through. Abstracting `Notifier`
+/// behind a protocol keeps `SessionStore` free of any hard dependency on
+/// `UserNotifications` — `Notifier.init` touches `UNUserNotificationCenter`,
+/// which crashes in a bundle-less SPM test process — so tests inject a plain
+/// spy instead. Production wires in the real `Notifier` exactly as before.
+@MainActor
+protocol SessionNotifying: AnyObject {
+    func notify(session: Session, reason: Notifier.Reason)
+}
+
 /// Fires a system notification the moment a session starts needing the
 /// user's attention (blocked on approval, or finished its turn and idle).
 /// Wraps `UNUserNotificationCenter`; every call is gated by `AppSettings` so
@@ -13,7 +23,7 @@ import UserNotifications
 /// actor via `Task { @MainActor in … }` before touching `settings` or
 /// `sessionLookup`.
 @MainActor
-final class Notifier: NSObject {
+final class Notifier: NSObject, SessionNotifying {
     enum Reason: String {
         case approval
         case idle

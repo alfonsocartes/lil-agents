@@ -71,7 +71,8 @@ struct WezTermJumper: TerminalJumper {
     /// Normalizes a tty string for comparison by stripping a leading `/dev/`,
     /// so the forwarder's `/dev/ttys004` matches `wezterm cli list`'s reported
     /// form regardless of whether it includes the prefix.
-    private static func normalizeTTY(_ s: String) -> String {
+    // `internal` (not `private`) so tests can exercise this pure helper directly.
+    internal static func normalizeTTY(_ s: String) -> String {
         s.hasPrefix("/dev/") ? String(s.dropFirst("/dev/".count)) : s
     }
 
