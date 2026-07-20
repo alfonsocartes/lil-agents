@@ -117,6 +117,18 @@ enum HookInstaller {
         PORT="\(port)"
         SUPPORT_DIR="\(supportPath)"
 
+        # Drain the hook's stdin BEFORE any work at all — including the tty
+        # parent-chain walk immediately below, not just the terminal-
+        # detection block that follows it. That walk alone can spawn ~2 `ps`
+        # calls per ancestor (up to ~64 total for a deep pid tree), and the
+        # detection block below it can spawn dozens more. A hook payload
+        # larger than the pipe buffer (64KB) would block the calling CLI's
+        # write() until we get around to reading it, so reading stdin FIRST
+        # — before either piece of work — is what actually keeps this
+        # script's "never blocks the CLI" contract intact. Nothing below
+        # this point re-reads stdin.
+        stdin_json="$(cat)"
+
         # Find the controlling tty of the CLI pane. The hook subprocess itself has
         # NO controlling terminal, so walk up the parent chain until we find one —
         # the CLI process (node/codex) running in the pane holds the pane's tty.
@@ -131,9 +143,129 @@ enum HookInstaller {
           pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
         done
 
-        stdin_json="$(cat)"
+        # Detect which terminal (or multiplexer) hosts this pane, for the
+        # "jump to pane" feature (see TerminalJumpers.swift). Best-effort —
+        # an unrecognized environment just leaves everything below empty and
+        # the app falls back to a no-op jump. Order: tmux (it hides the real
+        # terminal's env from most detection) first, then $TERM_PROGRAM, then
+        # a couple of last-resort env checks.
+        terminal=""
+        wezterm_pane=""
+        wezterm_socket=""
+        wezterm_exe=""
+        tmux_pane=""
+        tmux_socket=""
+        tmux_host=""
+        host_tty=""
 
-        json="$(printf '%s' "$stdin_json" | /usr/bin/python3 "$SUPPORT_DIR/merge-event.py" "$TOOL" "$EVENT" "$tty" 2>/dev/null)"
+        if [ -n "${TMUX:-}" ]; then
+          terminal="tmux"
+          tmux_socket="${TMUX%%,*}"
+          tmux_pane="${TMUX_PANE:-}"
+
+          # Best-effort: identify the GUI app hosting the tmux client attached
+          # to this session, so a jump can also raise ITS window. Takes the
+          # FIRST attached client — good enough for the common single-client
+          # case.
+          #
+          # Scope the lookup to THIS pane's session. `tmux list-clients`
+          # WITHOUT `-t` lists clients attached to ANY session on the whole
+          # tmux server, not just this one. With two terminal windows on one
+          # server (e.g. window A on session "work", window B on session
+          # "api"), a hook from "api" could pick up window A's client/tty
+          # here — and TmuxJumper later runs `switch-client -c <tty> -t
+          # "api"`, which would yank window A off the session the user is
+          # actively using and hijack it, instead of raising window B where
+          # this agent actually is. We scope by session ID rather than
+          # session NAME: tmux's `-t` target resolution can prefix-match an
+          # unqualified session name (e.g. a lookup for "api" can resolve to
+          # "api-staging" on a server that has both), which would silently
+          # pick clients from the wrong session and reintroduce the exact
+          # hijack this scoping is meant to prevent. Session IDs (e.g. "$3")
+          # are unique and never prefix-match, so `-t "$tmux_session_id"` is
+          # unambiguous by construction. If resolving the ID fails for any
+          # reason, fall back to the old unscoped lookup rather than losing
+          # detection entirely.
+          tmux_session_id=""
+          if [ -n "$tmux_pane" ]; then
+            tmux_session_id="$(tmux display-message -p -t "$tmux_pane" '#{session_id}' 2>/dev/null)"
+          fi
+          if [ -n "$tmux_session_id" ]; then
+            client_line="$(tmux list-clients -t "$tmux_session_id" -F '#{client_pid} #{client_tty} #{client_termname}' 2>/dev/null | head -1)"
+          else
+            client_line="$(tmux list-clients -F '#{client_pid} #{client_tty} #{client_termname}' 2>/dev/null | head -1)"
+          fi
+          if [ -n "$client_line" ]; then
+            client_pid="$(printf '%s' "$client_line" | awk '{print $1}')"
+            client_tty_raw="$(printf '%s' "$client_line" | awk '{print $2}')"
+            client_termname="$(printf '%s' "$client_line" | awk '{print $3}')"
+
+            # Walk the client pid up the process tree looking for a known GUI app.
+            walk_pid="$client_pid"
+            depth=0
+            while [ -n "$walk_pid" ] && [ "$walk_pid" -gt 1 ] 2>/dev/null && [ "$depth" -lt 32 ]; do
+              comm="$(ps -o comm= -p "$walk_pid" 2>/dev/null | tr -d ' ')"
+              case "$comm" in
+                *iTerm2*|*iTerm*) tmux_host="iterm2"; break ;;
+                *Terminal*)       tmux_host="apple_terminal"; break ;;
+                *WezTerm*|*wezterm*) tmux_host="wezterm"; break ;;
+                *Ghostty*|*ghostty*) tmux_host="ghostty"; break ;;
+              esac
+              walk_pid="$(ps -o ppid= -p "$walk_pid" 2>/dev/null | tr -d ' ')"
+              depth=$((depth + 1))
+            done
+
+            # Fallback: infer from the client's reported TERM when the
+            # process-tree walk didn't match (e.g. sandboxed/renamed process).
+            if [ -z "$tmux_host" ]; then
+              case "$client_termname" in
+                xterm-ghostty) tmux_host="ghostty" ;;
+                wezterm)       tmux_host="wezterm" ;;
+              esac
+            fi
+
+            # Only iTerm2/Terminal support a precise host-window raise (via
+            # their own tty-matching osascript) — capture the client's tty
+            # for that. WezTerm/Ghostty hosts are activated by app name only.
+            if [ "$tmux_host" = "iterm2" ] || [ "$tmux_host" = "apple_terminal" ]; then
+              if [ -n "$client_tty_raw" ] && [ "$client_tty_raw" != "??" ]; then
+                case "$client_tty_raw" in
+                  /dev/*) host_tty="$client_tty_raw" ;;
+                  *)      host_tty="/dev/$client_tty_raw" ;;
+                esac
+              fi
+            fi
+          fi
+        elif [ "${TERM_PROGRAM:-}" = "iTerm.app" ]; then
+          terminal="iterm2"
+        elif [ "${TERM_PROGRAM:-}" = "Apple_Terminal" ]; then
+          terminal="apple_terminal"
+        elif [ "${TERM_PROGRAM:-}" = "WezTerm" ]; then
+          terminal="wezterm"
+          wezterm_pane="${WEZTERM_PANE:-}"
+          wezterm_socket="${WEZTERM_UNIX_SOCKET:-}"
+          wezterm_exe="${WEZTERM_EXECUTABLE:-}"
+        elif [ "${TERM_PROGRAM:-}" = "ghostty" ]; then
+          terminal="ghostty"
+        elif [ -n "${GHOSTTY_RESOURCES_DIR:-}" ]; then
+          terminal="ghostty"
+        elif [ -n "${WEZTERM_PANE:-}" ]; then
+          terminal="wezterm"
+          wezterm_pane="${WEZTERM_PANE:-}"
+          wezterm_socket="${WEZTERM_UNIX_SOCKET:-}"
+          wezterm_exe="${WEZTERM_EXECUTABLE:-}"
+        fi
+
+        json="$(printf '%s' "$stdin_json" | \\
+          AGENTDECK_TERMINAL="$terminal" \\
+          AGENTDECK_WEZTERM_PANE="$wezterm_pane" \\
+          AGENTDECK_WEZTERM_SOCKET="$wezterm_socket" \\
+          AGENTDECK_WEZTERM_EXE="$wezterm_exe" \\
+          AGENTDECK_TMUX_PANE="$tmux_pane" \\
+          AGENTDECK_TMUX_SOCKET="$tmux_socket" \\
+          AGENTDECK_TMUX_HOST="$tmux_host" \\
+          AGENTDECK_HOST_TTY="$host_tty" \\
+          /usr/bin/python3 "$SUPPORT_DIR/merge-event.py" "$TOOL" "$EVENT" "$tty" 2>/dev/null)"
 
         if [ -n "$json" ]; then
           # Read the per-install bearer token the listener requires on every
@@ -170,9 +302,28 @@ enum HookInstaller {
         let script = """
         #!/usr/bin/env python3
         # AgentDeck event merger. Generated by HookInstaller — do not edit by hand.
-        # Reads the hook's stdin JSON, overlays tool/event/tty, prints merged JSON.
+        # Reads the hook's stdin JSON, overlays tool/event/tty plus the
+        # terminal-jump fields (passed via AGENTDECK_* env vars rather than argv,
+        # so this stays stable as fields are added), prints merged JSON.
         import json
+        import os
         import sys
+
+
+        # Maps each optional terminal-jump JSON key to the env var the forwarder
+        # sets it from (see HookInstaller.swift's writeForwarderScript). Only
+        # non-empty values are added, so old/undetected fields simply don't
+        # appear — HookEvent.swift decodes their absence as nil.
+        ENV_FIELDS = {
+            "terminal": "AGENTDECK_TERMINAL",
+            "wezterm_pane": "AGENTDECK_WEZTERM_PANE",
+            "wezterm_socket": "AGENTDECK_WEZTERM_SOCKET",
+            "wezterm_exe": "AGENTDECK_WEZTERM_EXE",
+            "tmux_pane": "AGENTDECK_TMUX_PANE",
+            "tmux_socket": "AGENTDECK_TMUX_SOCKET",
+            "tmux_host": "AGENTDECK_TMUX_HOST",
+            "host_tty": "AGENTDECK_HOST_TTY",
+        }
 
 
         def main() -> None:
@@ -193,6 +344,11 @@ enum HookInstaller {
             data["event"] = event
             if tty:
                 data["tty"] = tty
+
+            for key, env_name in ENV_FIELDS.items():
+                value = os.environ.get(env_name, "")
+                if value:
+                    data[key] = value
 
             print(json.dumps(data))
 

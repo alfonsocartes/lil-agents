@@ -18,6 +18,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let updaterController: SPUStandardUpdaterController
     private let onToggleOverlay: () -> Void
     private let isOverlayVisible: () -> Bool
+    private let onOpenSettings: () -> Void
 
     private let statusItem: NSStatusItem
     private var cancellables = Set<AnyCancellable>()
@@ -26,12 +27,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
          awake: StayAwakeController,
          updaterController: SPUStandardUpdaterController,
          onToggleOverlay: @escaping () -> Void,
-         isOverlayVisible: @escaping () -> Bool) {
+         isOverlayVisible: @escaping () -> Bool,
+         onOpenSettings: @escaping () -> Void) {
         self.store = store
         self.awake = awake
         self.updaterController = updaterController
         self.onToggleOverlay = onToggleOverlay
         self.isOverlayVisible = isOverlayVisible
+        self.onOpenSettings = onOpenSettings
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -104,6 +107,16 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         )
         toggleTop.target = self
         menu.addItem(toggleTop)
+
+        let settingsItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(openSettings),
+            keyEquivalent: ","
+        )
+        settingsItem.keyEquivalentModifierMask = .command
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
         menu.addItem(.separator())
 
         if store.sessions.isEmpty {
@@ -165,10 +178,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func jump(_ sender: NSMenuItem) {
         guard let session = sender.representedObject as? Session else { return }
-        ITermJumper.jump(tty: session.tty, cwd: session.cwd)
+        TerminalJumpers.jump(session.jumpTarget)
     }
 
     @objc private func toggleOverlay() { onToggleOverlay() }
+
+    @objc private func openSettings() { onOpenSettings() }
 
     @objc private func toggleAwake() { awake.toggle() }
 

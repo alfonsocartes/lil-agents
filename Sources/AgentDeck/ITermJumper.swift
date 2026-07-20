@@ -1,24 +1,26 @@
 import Foundation
 
 /// Jumps to the iTerm2 tab/pane whose controlling TTY matches a session shown in
-/// the overlay. The interface is FROZEN — `OverlayView.swift` / `MenuBarController`
-/// call `jump(tty:cwd:)` directly. Do not change the signature.
+/// the overlay, by matching the controlling TTY via osascript.
 ///
 /// NOTE: The first run triggers a macOS Automation (TCC) prompt to control
 /// "iTerm2". If denied, osascript exits non-zero and we log and return.
-enum ITermJumper {
-    static func jump(tty: String?, cwd: String?) {
-        guard let tty, !tty.isEmpty else {
-            NSLog("ITermJumper: no tty for session (cwd=\(cwd ?? "nil")); skipping jump")
+struct ITermJumper: TerminalJumper {
+    func jump(_ target: JumpTarget) {
+        guard let tty = target.tty, !tty.isEmpty else {
+            NSLog("ITermJumper: no tty for session (cwd=\(target.cwd ?? "nil")); skipping jump")
             return
         }
-        DispatchQueue.global(qos: .userInitiated).async {
-            runAppleScript(forTTY: tty)
-        }
+        Self.jump(tty: tty)
     }
 
-    private static func runAppleScript(forTTY tty: String) {
-        let escaped = escapeForAppleScriptString(tty)
+    /// Focuses the iTerm2 session whose tty matches `tty`. Exposed as a
+    /// static helper (in addition to the `TerminalJumper` conformance above)
+    /// so `TmuxJumper` can reuse it directly for a precise host-window raise
+    /// via a captured `host_tty` — the original single-terminal jump logic,
+    /// unchanged.
+    static func jump(tty: String) {
+        let escaped = AppleScriptSupport.escapeForAppleScriptString(tty)
         // Raise the matching session's window by setting its index to 1 (frontmost),
         // select the tab + session, then activate. Reading `tty of s` is wrapped in a
         // try so an odd session can't abort the whole scan.
@@ -45,34 +47,6 @@ enum ITermJumper {
             return "nomatch"
         end tell
         """
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script]
-        let outPipe = Pipe(), errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let out = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let err = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if process.terminationStatus != 0 || out != "focused" {
-                NSLog("ITermJumper: tty=\(tty) status=\(process.terminationStatus) out='\(out)' err='\(err)'")
-            }
-        } catch {
-            NSLog("ITermJumper: failed to launch osascript for \(tty): \(error)")
-        }
-    }
-
-    private static func escapeForAppleScriptString(_ raw: String) -> String {
-        raw
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: "")
-            .replacingOccurrences(of: "\r", with: "")
+        AppleScriptSupport.runFocusScript(script, label: "ITermJumper tty=\(tty)")
     }
 }
