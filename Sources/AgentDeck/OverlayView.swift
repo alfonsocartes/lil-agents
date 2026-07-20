@@ -32,10 +32,25 @@ extension Array where Element == Session {
 /// glance target. Title, hotkey hint, count, ⋯ menu and the stay-awake toggle
 /// were intentionally removed; those controls live in the menu bar.
 ///
+/// Design: minimal at rest, detail on intent (hover).
+/// - At rest every row is ONE line — status dot + project name. That's the
+///   overlay's whole resting job: which projects, what state. Elapsed time
+///   and the duplicate-disambiguation detail are hover-revealed, so the
+///   panel carries no reserved trailing column and no second lines.
+/// - Hovering a row reveals a trailing caption (tool/tty/elapsed) INSIDE the
+///   row's fixed bounds: the name yields width by truncating further, but the
+///   row height, the other rows, and the panel frame never move. No layout
+///   shift under the cursor, ever — the panel is an NSPanel sized by its
+///   hosting view, so any hover-driven resize would wobble the whole window.
+/// - The red needs-input state stays loud at rest (tint + dot + weight);
+///   urgency is never hover-gated.
+///
 /// Layout decisions, deliberately:
 /// - Fixed width (not intrinsic): project names get room and truncate at the
 ///   END (`ai-sessions…`), never mid-string garbage (`ai-s…ons`), and the
 ///   panel footprint stays predictable instead of breathing as text changes.
+///   With the trailing elapsed column gone, 180 pt gives names MORE room
+///   than the old 240 pt layout did.
 /// - Rows are ordered by project (see `displayOrdered`), not by status, so
 ///   they never reshuffle under the cursor.
 /// - `.ultraThinMaterial` + semantic hairline instead of a hard-coded black
@@ -55,7 +70,7 @@ struct OverlayView: View {
                 }
             }
         }
-        .frame(width: 240)
+        .frame(width: 180)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.separator))
     }
@@ -90,12 +105,16 @@ struct OverlayView: View {
         .padding(4)
     }
 
-    /// Second line shown ONLY when it disambiguates — i.e. when another
-    /// session shares this one's project label. Two identical "p2-marketplace"
-    /// rows are the overlay's worst failure mode; a lone session needs no
-    /// extra chrome. The detail is built from what actually differs:
-    /// the parent directory when the labels collide across different paths,
-    /// otherwise the tool plus the tty (two panes in the same project).
+    /// Disambiguating detail, built ONLY when another session shares this
+    /// one's project label. It used to be a permanent second line; it is now
+    /// hover-revealed, which collapses duplicates to one line at rest. The
+    /// accepted rest-state ambiguity: two same-project rows are told apart by
+    /// dot color and stable order alone — and since they ARE the same project,
+    /// a glance rarely needs more; the tty matters only when jumping, which is
+    /// exactly when the cursor is already on the row. The detail is built from
+    /// what actually differs: the parent directory when the labels collide
+    /// across different paths, otherwise the tool plus the tty (two panes in
+    /// the same project).
     private func detail(for session: Session, among sessions: [Session]) -> String? {
         let twins = sessions.filter { $0.label == session.label }
         guard twins.count > 1 else { return nil }
@@ -122,10 +141,20 @@ struct OverlayView: View {
 /// glyph — the whole row is the button and the hover highlight says so).
 /// Forcing both through one view meant every overlay decision risked the
 /// menu, so the shared row now belongs to the menu alone.
+///
+/// Rest vs hover:
+/// - Rest: dot + name. One line, fixed height.
+/// - Hover: a trailing caption fades in — the duplicate-disambiguation
+///   detail (or the tool name for unique rows) plus elapsed time when it's
+///   ≥ 1 minute ("now" carried nothing and is simply suppressed). The
+///   caption takes layout priority, so the NAME truncates to make room —
+///   safe, because by the time the user hovers they've already read the
+///   name; the reveal answers the follow-up questions (which pane? how
+///   long?). Nothing outside the row's fixed bounds changes.
 private struct OverlaySessionRow: View {
     let session: Session
-    /// Disambiguating second line, or nil when the project name alone is
-    /// unique (the common case — keeps rows single-line and the panel short).
+    /// Disambiguating hover detail, or nil when the project name alone is
+    /// unique (the common case — hover then shows tool + elapsed instead).
     let detail: String?
     /// Injected by the enclosing `TimelineView` so elapsed labels refresh.
     let now: Date
@@ -142,36 +171,35 @@ private struct OverlaySessionRow: View {
                     .fill(statusColor)
                     .frame(width: 7, height: 7)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(session.label)
-                        .font(.callout)
-                        .fontWeight(needsInput ? .medium : .regular)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    if let detail {
-                        Text(detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
+                Text(session.label)
+                    .font(.callout)
+                    .fontWeight(needsInput ? .medium : .regular)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
                 Spacer(minLength: 8)
 
-                // Elapsed time is the cheapest strong discriminator between
-                // rows ("2m" vs "1h") and doubles as a liveness cue.
-                Text(elapsedLabel)
-                    .font(.caption)
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
+                if isHovering {
+                    Text(hoverDetail)
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        // The reveal wins the width fight; the name truncates.
+                        .layoutPriority(1)
+                        .transition(.opacity)
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
+            // Pin the row height: the hover caption swaps in WITHIN these
+            // bounds, so neither this row nor its neighbors can ever reflow
+            // under the cursor.
+            .frame(height: 26)
             .background {
                 // The red "needs input" state is the one the user must act
                 // on, so it gets standing visual weight (a soft semantic
-                // tint), not just a 7-pt dot.
+                // tint), not just a 7-pt dot — never hover-gated.
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(needsInput ? AnyShapeStyle(.red.opacity(0.14)) : AnyShapeStyle(.clear))
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -182,9 +210,19 @@ private struct OverlaySessionRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
         .help("Jump to this session's pane")
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// What hover reveals, inside the row's own bounds. Duplicates show their
+    /// disambiguator (parent dir / tool / tty); unique rows show the tool, so
+    /// the reveal is never empty. Elapsed time joins from 1 minute up.
+    private var hoverDetail: String {
+        var parts: [String] = [detail ?? session.tool.display]
+        if elapsedMinutes >= 1 { parts.append(elapsedLabel) }
+        return parts.joined(separator: " · ")
     }
 
     // Traffic-light: green working, yellow idle/finished-turn, red needs your
@@ -211,16 +249,18 @@ private struct OverlaySessionRow: View {
 
     private var elapsedLabel: String {
         let minutes = elapsedMinutes
-        if minutes < 1 { return "now" }
         if minutes < 60 { return "\(minutes)m" }
         return "\(minutes / 60)h"
     }
 
-    /// The tool no longer has a visible glyph on the row, so it must stay in
-    /// the accessibility label — VoiceOver users get strictly more than the
-    /// visual layout shows, never less.
+    /// Everything the eye can only get by hovering — tool, tty/parent-dir
+    /// disambiguator, elapsed — must live here permanently: VoiceOver has no
+    /// hover, so the label carries strictly MORE than the resting visuals,
+    /// never less.
     private var accessibilityLabel: String {
-        var label = "\(session.label), \(session.tool.display), \(statusLabel)"
+        let spoken = (detail ?? session.tool.display)
+            .replacingOccurrences(of: " · ", with: ", ")
+        var label = "\(session.label), \(spoken), \(statusLabel)"
         let minutes = elapsedMinutes
         if minutes < 1 {
             label += ", updated just now"
@@ -259,14 +299,18 @@ private func overlaySample(
 
 #Preview("Overlay — sessions") {
     OverlayView(store: .previewStore([
-        // Two sessions in the SAME project — the detail line must appear.
+        // Two sessions in the SAME project — one line each at rest; the
+        // disambiguating detail (tool · tty) only appears on hover.
         overlaySample(id: "b", tool: .claude, status: .working,
                       cwd: "/Users/alfonso/Developer/p2-marketplace", tty: "/dev/ttys004", minutesAgo: 2),
         overlaySample(id: "a", tool: .codex, status: .waitingApproval,
                       cwd: "/Users/alfonso/Developer/p2-marketplace", tty: "/dev/ttys009", minutesAgo: 75),
-        // A lone session — single line, no detail.
+        // A lone session — hover shows tool + elapsed.
         overlaySample(id: "c", tool: .claude, status: .idle,
                       cwd: "/Users/alfonso/Developer/Tools/ai-sessions", tty: "/dev/ttys012", minutesAgo: 14),
+        // A fresh lone session — hover shows just the tool ("now" suppressed).
+        overlaySample(id: "d", tool: .codex, status: .working,
+                      cwd: "/Users/alfonso/Developer/wandity-site", tty: "/dev/ttys015", minutesAgo: 0),
     ]))
     .padding(40)
 }
