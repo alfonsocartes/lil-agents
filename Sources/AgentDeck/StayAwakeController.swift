@@ -1,5 +1,5 @@
 import Foundation
-import Combine
+import Observation
 
 /// Result of running an external command: exit status plus captured stdout/stderr.
 private struct ProcessResult {
@@ -18,24 +18,25 @@ private struct ProcessResult {
 /// prompting for admin credentials once via AppleScript. After that, toggling
 /// runs `sudo -n pmset ...` non-interactively.
 @MainActor
-final class StayAwakeController: ObservableObject {
-    @Published private(set) var isAwake: Bool = false {
+@Observable
+final class StayAwakeController {
+    private(set) var isAwake: Bool = false {
         didSet {
             guard isAwake != oldValue else { return }
             updateBatteryMonitoring()
         }
     }
 
-    @Published var batteryFloorEnabled: Bool = true {
+    var batteryFloorEnabled: Bool = true {
         didSet {
             guard batteryFloorEnabled != oldValue else { return }
             updateBatteryMonitoring()
         }
     }
 
-    @Published var batteryFloorPercent: Int = 20
+    var batteryFloorPercent: Int = 20
 
-    @Published var timerMinutes: Int? = nil {
+    var timerMinutes: Int? = nil {
         didSet {
             // Only reschedule if we're currently awake; otherwise this simply
             // affects the next call to `enable()`.
@@ -44,7 +45,8 @@ final class StayAwakeController: ObservableObject {
         }
     }
 
-    @Published private(set) var lastMessage: String? = nil
+    // surfaced nowhere yet — candidate for Settings
+    private(set) var lastMessage: String? = nil
 
     /// True only if THIS controller instance is the one that flipped SleepDisabled
     /// on. Gates `appWillTerminate()` so we never revert a setting some other
@@ -56,6 +58,10 @@ final class StayAwakeController: ObservableObject {
 
     /// Forces the display off when the lid closes while stay-awake is active —
     /// `disablesleep` alone can leave the internal panel backlit under the lid.
+    /// `@ObservationIgnored`: `@Observable` can't transform a `lazy var` (it
+    /// becomes a computed property under the hood, which `lazy` rejects), and
+    /// this is a private implementation detail with no UI observer anyway.
+    @ObservationIgnored
     private lazy var clamshell = ClamshellMonitor { [weak self] in self?.onLidClosed() }
 
     private static let pmsetPath = "/usr/bin/pmset"

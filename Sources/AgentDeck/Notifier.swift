@@ -2,6 +2,16 @@ import AppKit
 import Foundation
 import UserNotifications
 
+/// The seam SessionStore fires notifications through. Abstracting `Notifier`
+/// behind a protocol keeps `SessionStore` free of any hard dependency on
+/// `UserNotifications` — `Notifier.init` touches `UNUserNotificationCenter`,
+/// which crashes in a bundle-less SPM test process — so tests inject a plain
+/// spy instead. Production wires in the real `Notifier` exactly as before.
+@MainActor
+protocol SessionNotifying: AnyObject {
+    func notify(session: Session, reason: Notifier.Reason)
+}
+
 /// Fires a system notification the moment a session starts needing the
 /// user's attention (blocked on approval, or finished its turn and idle).
 /// Wraps `UNUserNotificationCenter`; every call is gated by `AppSettings` so
@@ -13,7 +23,7 @@ import UserNotifications
 /// actor via `Task { @MainActor in … }` before touching `settings` or
 /// `sessionLookup`.
 @MainActor
-final class Notifier: NSObject {
+final class Notifier: NSObject, SessionNotifying {
     enum Reason: String {
         case approval
         case idle
@@ -85,10 +95,15 @@ extension Notifier: UNUserNotificationCenterDelegate {
     /// the default behavior suppresses banners for a foreground app, which
     /// would make notifications invisible for an accessory app the user just
     /// happens to have focus near.
+    /// `@Sendable` on the completion handlers below: UNUserNotificationCenter's
+    /// blocks are ObjC blocks documented as callable from any thread; declaring
+    /// them `@Sendable` here (legal for @objc conformances, where blocks carry
+    /// no sendability) is what lets `didReceive` carry its handler into the
+    /// main-actor Task.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+        withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner, .sound])
     }
@@ -98,7 +113,7 @@ extension Notifier: UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
-        withCompletionHandler completionHandler: @escaping () -> Void
+        withCompletionHandler completionHandler: @escaping @Sendable () -> Void
     ) {
         let sessionID = response.notification.request.content.userInfo[Self.sessionIDKey] as? String
         Task { @MainActor in
@@ -116,7 +131,7 @@ extension Notifier: UNUserNotificationCenterDelegate {
                 //
                 // Notifier only has `sessionLookup` and `settings` to work
                 // with — it has no reference to AppDelegate's floating panel
-                // or MenuBarController, so it can't reveal the overlay
+                // or the menu-bar panel, so it can't reveal the overlay
                 // itself without threading one through from outside. Falling
                 // back to activating the app is the best available response
                 // without touching other files.

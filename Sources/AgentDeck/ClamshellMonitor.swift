@@ -6,6 +6,7 @@ import IOKit.pwr_mgt
 /// lid is shut. Needed because with `SleepDisabled` set, closing the lid no
 /// longer sleeps the machine — and the internal panel can stay backlit — so we
 /// force the display off ourselves on lid close.
+@MainActor
 final class ClamshellMonitor {
     private let onClosed: () -> Void
     private var notifyPort: IONotificationPortRef?
@@ -40,7 +41,14 @@ final class ClamshellMonitor {
             kIOGeneralInterest,
             { refcon, _, _, _ in
                 guard let refcon else { return }
-                Unmanaged<ClamshellMonitor>.fromOpaque(refcon).takeUnretainedValue().handleInterest()
+                // Sound: the notify port's run-loop source is added to
+                // CFRunLoopGetMain() (see start() above), so IOKit delivers
+                // this callback on the main thread — main-actor isolation is
+                // genuinely guaranteed, the C function pointer just can't
+                // express it.
+                MainActor.assumeIsolated {
+                    Unmanaged<ClamshellMonitor>.fromOpaque(refcon).takeUnretainedValue().handleInterest()
+                }
             },
             ctx,
             &interest

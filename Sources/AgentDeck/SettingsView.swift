@@ -1,12 +1,30 @@
 import SwiftUI
 
-/// Content of the Settings window: notification preferences bound directly
-/// to `AppSettings`. Compact by design — this app has exactly one settings
-/// surface, no tabs/sidebar needed.
+/// Content of the SwiftUI `Settings` scene. Two sections: the notification
+/// preferences bound directly to `AppSettings`, and — visually separated at the
+/// bottom — the destructive Uninstall action (which relocated here out of the
+/// menu-bar dropdown, behind a native confirmation dialog).
 struct SettingsView: View {
-    @ObservedObject var settings: AppSettings
+    @Bindable var settings: AppSettings
+
+    /// Drives the uninstall confirmation dialog. The old NSAlert confirmation
+    /// lived in `Uninstaller`; the confirmation is now SwiftUI's, and
+    /// `Uninstaller.performUninstall()` runs only after the user confirms.
+    @State private var confirmingUninstall = false
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            notificationsSection
+
+            Divider()
+
+            uninstallSection
+        }
+        .padding(20)
+        .frame(width: 380)
+    }
+
+    private var notificationsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Notifications")
                 .font(.headline)
@@ -27,7 +45,33 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(20)
-        .frame(width: 360)
+    }
+
+    private var uninstallSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Uninstall")
+                .font(.headline)
+
+            Text("This removes lil agents' hooks, its stay-awake system rule, and its support files.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button("Uninstall lil agents…", role: .destructive) {
+                confirmingUninstall = true
+            }
+            .confirmationDialog(
+                "Uninstall lil agents?",
+                isPresented: $confirmingUninstall,
+                titleVisibility: .visible
+            ) {
+                Button("Uninstall", role: .destructive) {
+                    Uninstaller.performUninstall()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This removes lil agents' hooks, its stay-awake system rule, and its support files, then quits and reveals the app in Finder so you can drag it to the Trash. This can't be undone.")
+            }
+        }
     }
 }

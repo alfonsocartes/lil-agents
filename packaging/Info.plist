@@ -21,7 +21,7 @@
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>26.0</string>
     <!-- Menu-bar-less / Dock-less agent app: the only surface is the floating overlay. -->
     <key>LSUIElement</key>
     <true/>

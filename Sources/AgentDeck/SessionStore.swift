@@ -1,12 +1,13 @@
 import Foundation
-import Combine
+import Observation
 
 /// Holds the set of live sessions and applies incoming hook events to drive
 /// each session's status. Main-actor bound — the UI observes it directly.
 @MainActor
-final class SessionStore: ObservableObject {
+@Observable
+final class SessionStore {
     /// Sessions sorted for display: attention-needing first, then working, then idle.
-    @Published private(set) var sessions: [Session] = []
+    private(set) var sessions: [Session] = []
 
     private var byID: [String: Session] = [:]
     private var pruneTimer: Timer?
@@ -38,8 +39,15 @@ final class SessionStore: ObservableObject {
     /// Fires a system notification on attention transitions (see
     /// `notifyIfNeeded` below). Optional so SessionStore carries no hard
     /// dependency on UserNotifications (e.g. for tests) — AppDelegate wires
-    /// this in before the listener starts.
-    var notifier: Notifier?
+    /// this in before the listener starts. Typed as the `SessionNotifying`
+    /// protocol (not the concrete `Notifier`) so tests can inject a spy that
+    /// records notifications without touching `UNUserNotificationCenter`.
+    var notifier: (any SessionNotifying)?
+
+    /// Test seam: the store's clock. Production keeps the default (`Date()`),
+    /// so behavior is unchanged; tests set it to advance time deterministically
+    /// when exercising `lastNotified` aging and `pruneStale`.
+    var now: () -> Date = { Date() }
 
     /// Aggregate state across all sessions — drives the menu bar / header icon.
     /// Priority (most attention-worthy first): needsInput > idle > working > none.
@@ -75,7 +83,7 @@ final class SessionStore: ObservableObject {
         case "SubagentStop":
             // A subagent finished — the parent session is still working. Touch
             // only the timestamp so it isn't pruned, don't flip to idle.
-            if var s = byID[id] { s.lastUpdate = Date(); byID[id] = s; rebuild() }
+            if var s = byID[id] { s.lastUpdate = now(); byID[id] = s; rebuild() }
             return
         default:
             break
@@ -99,7 +107,7 @@ final class SessionStore: ObservableObject {
             if let v = event.tmux_socket, !v.isEmpty { s.tmuxSocket = v }
             if let v = event.tmux_host, let kind = TerminalKind(rawValue: v) { s.tmuxHost = kind }
             if let v = event.host_tty, !v.isEmpty { s.hostTTY = v }
-            s.lastUpdate = Date()
+            s.lastUpdate = now()
             byID[id] = s
         } else {
             byID[id] = Session(
@@ -108,7 +116,7 @@ final class SessionStore: ObservableObject {
                 status: status ?? .working,
                 cwd: event.cwd,
                 tty: event.tty,
-                lastUpdate: Date(),
+                lastUpdate: now(),
                 terminal: event.terminalKind,
                 weztermPane: event.wezterm_pane,
                 weztermSocket: event.wezterm_socket,
@@ -164,11 +172,11 @@ final class SessionStore: ObservableObject {
         if session.status == .waitingApproval, previousStatus != .waitingApproval,
            lastNotified[id]?.status != .waitingApproval {
             notifier?.notify(session: session, reason: .approval)
-            lastNotified[id] = (status: .waitingApproval, at: Date())
+            lastNotified[id] = (status: .waitingApproval, at: now())
         } else if session.status == .idle, previousStatus != .idle,
                   lastNotified[id]?.status != .idle {
             notifier?.notify(session: session, reason: .idle)
-            lastNotified[id] = (status: .idle, at: Date())
+            lastNotified[id] = (status: .idle, at: now())
         }
     }
 
@@ -195,8 +203,10 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    private func pruneStale() {
-        let cutoff = Date().addingTimeInterval(-AgentDeck.staleAfter)
+    // `internal` (not `private`) so tests can drive prune behavior directly
+    // with an injected clock, rather than waiting on the 30s interval timer.
+    func pruneStale() {
+        let cutoff = now().addingTimeInterval(-AgentDeck.staleAfter)
         let before = byID.count
         byID = byID.filter { $0.value.lastUpdate >= cutoff }
         if byID.count != before { rebuild() }
@@ -207,7 +217,7 @@ final class SessionStore: ObservableObject {
         // after byID already pruned it" suppression case above keeps
         // working across realistic gaps, while still guaranteeing this map
         // can't grow unboundedly over a long-running AgentDeck process.
-        let notifiedCutoff = Date().addingTimeInterval(-AgentDeck.staleAfter * 24)
+        let notifiedCutoff = now().addingTimeInterval(-AgentDeck.staleAfter * 24)
         lastNotified = lastNotified.filter { $0.value.at >= notifiedCutoff }
     }
 
@@ -226,3 +236,16 @@ final class SessionStore: ObservableObject {
         }
     }
 }
+
+#if DEBUG
+extension SessionStore {
+    /// Preview-only: a store pre-seeded with fixed sessions, bypassing the event
+    /// pipeline. Lives in this file so it can reach the file-private `sessions`
+    /// setter. Never compiled into release.
+    static func previewStore(_ sessions: [Session]) -> SessionStore {
+        let store = SessionStore()
+        store.sessions = sessions
+        return store
+    }
+}
+#endif

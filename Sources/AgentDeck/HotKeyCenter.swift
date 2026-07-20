@@ -7,12 +7,15 @@ import Carbon.HIToolbox
 /// Accessibility (TCC) permission that an `NSEvent` global monitor would require,
 /// and they fire even while another app is focused — exactly what's needed to
 /// summon a hidden overlay from inside iTerm2.
+@MainActor
 final class HotKeyCenter {
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
     private var handler: (() -> Void)?
 
     private let signature: OSType = 0x41474454 // 'AGDT'
+    // Accessed from the nonisolated C callback below — legal because it's an
+    // immutable Sendable `let` (nonisolated access to such storage is allowed).
     private let hotKeyID: UInt32 = 1
 
     /// Register (replacing any previous registration). `handler` is always called
@@ -43,7 +46,10 @@ final class HotKeyCenter {
                 &received
             )
             if received.id == center.hotKeyID {
-                DispatchQueue.main.async { center.handler?() }
+                // The C callback can't be actor-isolated; `center` is Sendable
+                // (a @MainActor class), so hop explicitly. Task { @MainActor }
+                // preserves the old DispatchQueue.main.async deferred delivery.
+                Task { @MainActor in center.handler?() }
             }
             return noErr
         }, 1, &spec, selfPtr, &eventHandler)
@@ -71,5 +77,8 @@ final class HotKeyCenter {
         }
     }
 
-    deinit { unregister() }
+    // `isolated deinit`: runs on the main actor, so it can call `unregister()`
+    // (which touches @MainActor state). The only owner is AppDelegate — itself
+    // main-actor — so in practice deallocation happens there anyway.
+    isolated deinit { unregister() }
 }

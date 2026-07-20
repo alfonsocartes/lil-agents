@@ -1,30 +1,26 @@
 import AppKit
 import Foundation
+import Synchronization
 
 /// Thread-safe single-write, single-read box for one pipe's drained bytes.
 /// `drainAndWait` below hands one of these to each of two concurrent
 /// `DispatchQueue.global()` closures; each writes it exactly once via `set`
 /// and nothing reads via `get` until both closures have finished (enforced
-/// by `group.wait()`), so there's no real contention. The box — and its lock
-/// — exist only because Swift 6 language mode rejects mutating a captured
-/// `var` from concurrently-executing closures outright (a build error we'd
-/// otherwise hit the moment this target drops its `.v5` language-mode
-/// override in Package.swift), not because the underlying access pattern is
-/// actually unsafe.
-private final class DataBox {
-    private let lock = NSLock()
-    private var data = Data()
+/// by `group.wait()`), so there's no real contention. The box — and its
+/// `Mutex` — exist only because Swift 6 language mode rejects mutating a
+/// captured `var` from concurrently-executing closures outright, not because
+/// the underlying access pattern is actually unsafe. All storage is a
+/// `Mutex` (itself `Sendable`), so the class earns a checked `Sendable`
+/// conformance — no `@unchecked` needed.
+private final class DataBox: Sendable {
+    private let data = Mutex(Data())
 
     func set(_ newData: Data) {
-        lock.lock()
-        data = newData
-        lock.unlock()
+        data.withLock { $0 = newData }
     }
 
     func get() -> Data {
-        lock.lock()
-        defer { lock.unlock() }
-        return data
+        data.withLock { $0 }
     }
 }
 

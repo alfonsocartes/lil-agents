@@ -83,7 +83,7 @@ def main() -> None:
       <pubDate>{pub_date}</pubDate>
       <sparkle:version>{build_number}</sparkle:version>
       <sparkle:shortVersionString>{version}</sparkle:shortVersionString>
-      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
       <enclosure
         url="{download_url}"
         length="{length}"
