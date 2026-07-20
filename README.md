@@ -15,7 +15,8 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-black)
 ![Swift](https://img.shields.io/badge/Swift-6.0-orange)
 ![UI](https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-blue)
-![Status](https://img.shields.io/badge/status-v0.1.0-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/status-v0.3.0-brightgreen)
 
 <p align="center">
   <img src="assets/overlay-screenshot.png" alt="lil agents floating overlay showing live Claude Code and Codex sessions with traffic-light status" width="300" />
@@ -37,14 +38,15 @@ When you drive several coding agents at once, they spend most of their time out 
 - 🟡 **Yellow** — a session **finished its turn** and is waiting for your next prompt.
 - 🟢 **Green** — a session is **actively working** (running a tool or thinking).
 
-Click any session and it **brings the matching iTerm2 tab to the front** — no more hunting through windows.
+Click any session and it **jumps to the exact terminal pane that owns it** — across iTerm2, Terminal.app, WezTerm, and tmux — no more hunting through windows. And if you'd rather be told than glance, it can post a **Notification Center alert** (with optional sound) the moment a session needs you.
 
 ## Features
 
 - **Real-time agent monitoring** — tracks Claude Code and Codex CLI sessions as they start, work, prompt, and finish.
 - **Floating overlay** — a compact, near-transparent, always-on-top list of live sessions. Toggle it anywhere with a global hotkey (**⌥⌘J**).
 - **Menu bar status icon** — the menu-bar glyph changes color to reflect the most attention-worthy session (red → yellow → green), so you know the state without even opening the overlay.
-- **One-click jump to terminal** — click a session (in the overlay or the menu) to focus the exact **iTerm2** tab/pane that owns it, matched by controlling TTY.
+- **One-click jump to terminal** — click a session (in the overlay or the menu) to focus the exact pane that owns it. Precise focus for **iTerm2, Terminal.app, WezTerm, and tmux** (matched by controlling TTY / pane id); **Ghostty** gets precise split focus too via its AppleScript API (working-directory match on 1.3.0+, exact TTY match on 1.4.0+/tip), falling back to bringing the app forward on older builds.
+- **Notification Center alerts** — optionally get a banner (and sound) the instant a session goes **🔴 needs-approval** or **🟡 finished-its-turn**. Fires once per transition; tap the alert to jump straight to that pane. Fully configurable in **Settings** (which states, sound, on/off).
 - **Project-aware labels** — each session is labeled by its working-directory name, so you can tell your repos apart at a glance.
 - **Stay awake (lid closed)** — an optional toggle keeps your Mac awake with the lid shut, so long agent runs don't get suspended mid-task.
 - **Zero-config hook install** — one action wires the lifecycle hooks into both CLIs; config files are *merged, never clobbered*, and install is idempotent and self-healing.
@@ -74,7 +76,7 @@ Existing hooks from other tools and plugins are preserved — the installer only
 
 - **macOS 14 (Sonoma) or later**
 - **Swift 6 toolchain** (Xcode 16+) to build from source
-- **[iTerm2](https://iterm2.com/)** for click-to-jump (matches sessions by TTY)
+- A supported terminal for click-to-jump — **[iTerm2](https://iterm2.com/)**, **Terminal.app**, **[WezTerm](https://wezterm.org/)**, or **[tmux](https://github.com/tmux/tmux)** for precise pane focus (**[Ghostty](https://ghostty.org/)** 1.3.0+ also gets precise split focus via its AppleScript API; older Ghostty falls back to app-activate). Sessions are still *tracked* in any terminal — this only affects jump-to-pane.
 - **Claude Code** and/or **Codex CLI** installed — whichever agents you want to monitor
 
 ## Download & Install
@@ -121,7 +123,8 @@ On first launch, use the app's install action to wire up the CLI hooks, then sta
 | Action | How |
 | --- | --- |
 | Show / hide the overlay | Global hotkey **⌥⌘J**, or the menu-bar menu |
-| Jump to a session's terminal | Click the session row (overlay) or menu item |
+| Jump to a session's terminal | Click the session row (overlay) or menu item, or tap its notification |
+| Configure notifications | Menu bar → **Settings…** (**⌘,**) |
 | Keep Mac awake with lid closed | Menu bar → **Stay awake (lid closed)** |
 | Quit | Menu bar → **Quit lil agents** |
 
@@ -154,7 +157,7 @@ It then reveals **lil agents.app** in Finder so you can drag it to the Trash you
 
 ## Tech stack
 
-Swift 6 · SwiftUI · AppKit · Network.framework (embedded loopback listener) · Carbon global hotkey · AppleScript/osascript (iTerm2 automation) · Sparkle (auto-updates) · SwiftPM.
+Swift 6 · SwiftUI · AppKit · Network.framework (embedded loopback listener) · UserNotifications · Carbon global hotkey · AppleScript/osascript + CLI (iTerm2 / Terminal.app / WezTerm / tmux / Ghostty automation) · Sparkle (auto-updates) · SwiftPM.
 
 ## Releasing (maintainer)
 
@@ -180,15 +183,13 @@ The workflow needs the following repository secrets configured under **Settings 
 
 ## Roadmap ideas
 
-- Support for additional terminals (Terminal.app, Ghostty, WezTerm, tmux)
-- Notification Center / sound alerts when a session needs input
 - Per-session elapsed-time and turn counts
 
 Contributions and issues welcome.
 
 ## License
 
-_Add your license here (e.g. MIT)._
+Released under the [MIT License](LICENSE). © 2026 Wandity Ltd.
 
 ---
 
