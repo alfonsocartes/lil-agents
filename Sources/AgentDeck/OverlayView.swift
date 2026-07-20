@@ -53,8 +53,21 @@ extension Array where Element == Session {
 ///   than the old 240 pt layout did.
 /// - Rows are ordered by project (see `displayOrdered`), not by status, so
 ///   they never reshuffle under the cursor.
-/// - `.ultraThinMaterial` + semantic hairline instead of a hard-coded black
-///   wash, so it reads as a native widget in both light and dark mode.
+/// - Liquid Glass (`glassEffect`, regular variant), not `.ultraThinMaterial`:
+///   on macOS 26 glass is the prescribed surface for exactly this kind of
+///   element — an interactive control layer floating above content (HIG
+///   "Materials": glass "forms a distinct functional layer for controls and
+///   navigation elements … that floats above the content layer"; standard
+///   materials are for differentiation *within* an app's content layer,
+///   which this panel is not). The regular variant, not `.clear`, because
+///   the panel is text-heavy and must stay legible over arbitrary desktop
+///   content; `.clear` is reserved for chrome over media. No hairline
+///   stroke: glass draws its own lensing rim, and a stroked border on top
+///   reads as pre-26 chrome. One glass sheet only — rows use plain
+///   color/vibrancy fills, never a second glass layer (glass-on-glass is
+///   explicitly discouraged). The system swaps in a frosted fallback under
+///   Reduce Transparency and when the window is inactive; both are native
+///   behavior, not ours to re-implement.
 /// - Elapsed time is wrapped in a per-minute `TimelineView` so "5m" stays
 ///   honest without the store having to publish anything.
 struct OverlayView: View {
@@ -71,8 +84,7 @@ struct OverlayView: View {
             }
         }
         .frame(width: 180)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.separator))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     /// A quiet one-liner rather than an invisible sliver: the panel is toggled
@@ -200,9 +212,14 @@ private struct OverlaySessionRow: View {
                 // The red "needs input" state is the one the user must act
                 // on, so it gets standing visual weight (a soft semantic
                 // tint), not just a 7-pt dot — never hover-gated.
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                //
+                // Radius 8 = the panel's 12 minus the 4-pt list padding, so
+                // row highlights nest concentrically inside the glass shape
+                // (the macOS 26 corner idiom). Plain fills, deliberately:
+                // a second glassEffect here would stack glass on glass.
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(needsInput ? AnyShapeStyle(.red.opacity(0.14)) : AnyShapeStyle(.clear))
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(.quaternary)
                     .opacity(isHovering ? 1 : 0)
             }
@@ -297,6 +314,21 @@ private func overlaySample(
     )
 }
 
+/// A loud multi-stop backdrop standing in for "arbitrary desktop content":
+/// glass is invisible over a flat preview canvas, and its whole legibility
+/// question — regular-variant blur keeping `.primary`/`.secondary` readable —
+/// only shows up over something busy.
+private struct PreviewDesktopBackdrop: View {
+    var body: some View {
+        LinearGradient(
+            colors: [.indigo, .teal, .orange, .pink],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+}
+
 #Preview("Overlay — sessions") {
     OverlayView(store: .previewStore([
         // Two sessions in the SAME project — one line each at rest; the
@@ -313,10 +345,12 @@ private func overlaySample(
                       cwd: "/Users/alfonso/Developer/wandity-site", tty: "/dev/ttys015", minutesAgo: 0),
     ]))
     .padding(40)
+    .background(PreviewDesktopBackdrop())
 }
 
 #Preview("Overlay — empty") {
     OverlayView(store: .previewStore([]))
         .padding(40)
+        .background(PreviewDesktopBackdrop())
 }
 #endif
