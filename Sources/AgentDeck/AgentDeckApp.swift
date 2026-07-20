@@ -22,7 +22,7 @@ struct AgentDeckApp: App {
                 awake: appDelegate.services.awake,
                 overlay: appDelegate.services.overlay,
                 updater: appDelegate.services.updater,
-                onOpenSettings: { appDelegate.services.settingsWindow.show() }
+                activationPolicy: appDelegate.services.activationPolicy
             )
         } label: {
             StatusIconLabel(
@@ -31,5 +31,12 @@ struct AgentDeckApp: App {
             )
         }
         .menuBarExtraStyle(.window)
+
+        // Native settings surface. Opened from the menu via the `openSettings`
+        // environment action; `ActivationPolicyController` handles making it
+        // frontmost (and reverting) in this accessory app.
+        Settings {
+            SettingsView(settings: appDelegate.services.settings)
+        }
     }
 }

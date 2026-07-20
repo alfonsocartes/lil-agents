@@ -6,13 +6,12 @@ import SwiftUI
 // The SwiftUI content rendered inside the `MenuBarExtra` (window style) that
 // replaced the legacy NSStatusItem/NSMenu implementation. Wired to the live
 // SessionStore, overlay controller, stay-awake controller, and the settings /
-// Sparkle / uninstall actions.
+// Sparkle actions.
 //
-// Note on "Uninstall lil agents…": in the old NSMenu it sat directly above
-// "Quit lil agents", a classic accident-prone layout — a destructive,
-// irreversible action one slightly-off click from the most-used item. It is
-// slated to move into the Settings window (see the TODO below); until then it
-// lives here, isolated from Quit by a divider so the two are never adjacent.
+// The destructive "Uninstall lil agents…" action used to live here (isolated
+// from Quit by a divider); it has since moved into the Settings scene, behind a
+// native confirmation dialog, so it's no longer one slightly-off click from the
+// most-used item.
 
 /// Menu-bar dropdown content. Renders a fixed-width, vertically stacked menu
 /// with aligned icon columns, richer session rows, and clearer on/off
@@ -23,8 +22,13 @@ struct MenuBarContentView: View {
     let overlay: OverlayController
     @ObservedObject var updater: UpdaterController
 
-    /// Opens the existing AppKit Settings window (SettingsWindowController).
-    let onOpenSettings: () -> Void
+    /// Flips activation policy so the `Settings` scene comes frontmost with a
+    /// menu bar when opened, and reverts on close.
+    let activationPolicy: ActivationPolicyController
+
+    /// SwiftUI's native action to open the `Settings` scene. Paired with
+    /// `activationPolicy` so the window actually gets focus in this accessory app.
+    @Environment(\.openSettings) private var openSettings
 
     /// Closes the `MenuBarExtra` panel. Spike-verified to work for the
     /// `.window` menu-bar style. Called after every action that navigates
@@ -77,7 +81,7 @@ struct MenuBarContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 MenuRow(icon: "gearshape", title: "Settings…", trailing: "⌘,") {
                     dismiss()
-                    onOpenSettings()
+                    activationPolicy.openSettings(openSettings)
                 }
                 .keyboardShortcut(",", modifiers: .command)
 
@@ -89,20 +93,6 @@ struct MenuBarContentView: View {
                     updater.controller.checkForUpdates(nil)
                 }
                 .disabled(!updater.canCheckForUpdates)
-            }
-
-            Divider()
-                .padding(.vertical, 4)
-
-            // TODO(phase-5): move into Settings. Temporary row so Uninstall stays
-            // reachable now that the old NSMenu that hosted it is gone. Isolated
-            // from Quit by the divider below so the destructive action is never
-            // adjacent to the most-used item.
-            MenuRow(icon: "trash", title: "Uninstall lil agents…", trailing: nil) {
-                // Dismiss BEFORE prompting: the panel must not hover over the
-                // confirmation alert.
-                dismiss()
-                Uninstaller.promptAndUninstall()
             }
 
             Divider()
@@ -300,7 +290,7 @@ private func previewMenu(sessions: [Session], awake: Bool) -> some View {
         awake: stayAwake,
         overlay: overlay,
         updater: updater,
-        onOpenSettings: {}
+        activationPolicy: ActivationPolicyController()
     )
     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     .padding(20)

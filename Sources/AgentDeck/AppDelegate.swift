@@ -71,8 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // The menu bar presence is the SwiftUI `MenuBarExtra` scene in
         // `AgentDeckApp` (status icon + session dropdown); the legacy
-        // NSStatusItem/NSMenu implementation has been removed. The Settings
-        // window it used to drive lives on `AppServices` (`services.settingsWindow`).
+        // NSStatusItem/NSMenu implementation has been removed. Settings is now
+        // the SwiftUI `Settings` scene, opened via the `openSettings` action
+        // with `services.activationPolicy` handling frontmost-ness.
 
         // Ask for notification permission once at launch. NSLog reports the
         // outcome; harmless to call on every launch — the system only

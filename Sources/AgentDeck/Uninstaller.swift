@@ -2,10 +2,11 @@ import AppKit
 
 /// Fully reverses lil agents' footprint on the machine: CLI hooks, the
 /// stay-awake sudoers rule (and the disablesleep flag if it's on), and the
-/// app's support directory. Triggered from the "Uninstall lil agents…" menu
-/// item after a confirmation alert. Never crashes — every step is best-effort
-/// and logs/surfaces failures without aborting the remaining steps, so a
-/// partially-broken install can still be cleaned up.
+/// app's support directory. Triggered from the Uninstall action in Settings
+/// after a native confirmation dialog (the confirmation is SwiftUI's, so this
+/// runs only once the user has already confirmed). Never crashes — every step
+/// is best-effort and logs/surfaces failures without aborting the remaining
+/// steps, so a partially-broken install can still be cleaned up.
 @MainActor
 enum Uninstaller {
     private struct ProcessResult {
@@ -19,23 +20,10 @@ enum Uninstaller {
 
     // MARK: - Entry point
 
-    /// Shows a confirmation alert; on confirm, performs the full uninstall and
-    /// terminates the app. No-op if the user cancels.
-    static func promptAndUninstall() {
-        let alert = NSAlert()
-        alert.messageText = "Uninstall lil agents?"
-        alert.informativeText = "This removes lil agents' hooks, its stay-awake system rule, and its support files. Continue?"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Uninstall")
-        alert.addButton(withTitle: "Cancel")
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        perform()
-    }
-
-    // MARK: - Steps
-
-    private static func perform() {
+    /// Performs the full uninstall and terminates the app. The confirmation is
+    /// owned by SwiftUI now (a `.confirmationDialog` in Settings), so this is
+    /// only ever called after the user has confirmed.
+    static func performUninstall() {
         var issues: [String] = []
 
         do {
