@@ -24,7 +24,7 @@ struct GhosttyJumper: TerminalJumper {
         if let tty = target.tty, !tty.isEmpty, Self.focus(property: "tty", equals: tty) {
             return
         }
-        if let cwd = target.cwd, !cwd.isEmpty, Self.focus(property: "working directory", equals: cwd) {
+        if let cwd = target.cwd, !cwd.isEmpty, Self.focusByWorkingDirectory(cwd) {
             return
         }
         AppleScriptSupport.activate(candidates: ["Ghostty"], label: "GhosttyJumper")
@@ -35,7 +35,10 @@ struct GhosttyJumper: TerminalJumper {
     /// reported "focused". Reading the property is wrapped in a `try` so one
     /// odd terminal (or a Ghostty version that doesn't know the property at
     /// all) can't abort the scan — it just yields "nomatch"/an error, which
-    /// we treat as silent no-match.
+    /// we treat as silent no-match. `focus` raises the terminal's window
+    /// within Ghostty but doesn't reliably bring the Ghostty app itself
+    /// forward over other apps, so `activate` follows it (mirrors
+    /// `ITermJumper`, which does the same after selecting its match).
     private static func focus(property: String, equals value: String) -> Bool {
         let escaped = AppleScriptSupport.escapeForAppleScriptString(value)
         let script = """
@@ -50,6 +53,55 @@ struct GhosttyJumper: TerminalJumper {
                         end try
                         if tv is targetValue then
                             focus tm
+                            activate
+                            return "focused"
+                        end if
+                    end repeat
+                end repeat
+            end repeat
+            return "nomatch"
+        end tell
+        """
+        let (status, out, _) = AppleScriptSupport.run(script)
+        return status == 0 && out == "focused"
+    }
+
+    /// Same scan as `focus(property:equals:)`, specialized for the cwd tier:
+    /// both sides of the comparison are symlink-resolved so a session whose
+    /// cwd is a symlink (e.g. `~/Source` -> `/Volumes/...`) still matches
+    /// Ghostty's resolved `working directory`, and a trailing-slash
+    /// difference is tolerated. Kept separate from `focus` rather than
+    /// parameterized, since this normalization is specific to directory
+    /// paths — the tty tier is a device path and must NOT go through it.
+    private static func focusByWorkingDirectory(_ cwd: String) -> Bool {
+        var target = URL(fileURLWithPath: cwd).resolvingSymlinksInPath().path
+        if target.count > 1, target.hasSuffix("/") {
+            target.removeLast()
+        }
+        let escaped = AppleScriptSupport.escapeForAppleScriptString(target)
+        let script = """
+        tell application "Ghostty"
+            set targetValue to "\(escaped)"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    repeat with tm in terminals of t
+                        set tv to ""
+                        try
+                            set tv to working directory of tm
+                        end try
+                        -- Resolve tv through an alias so a symlinked cwd compares
+                        -- equal to the already-resolved targetValue. Wrapped in a
+                        -- `try` so a stale/nonexistent directory can't abort the
+                        -- scan — tv just falls back to the raw value.
+                        try
+                            set tv to POSIX path of ((POSIX file tv) as alias)
+                        end try
+                        if tv ends with "/" and tv is not "/" then
+                            set tv to text 1 thru -2 of tv
+                        end if
+                        if tv is targetValue then
+                            focus tm
+                            activate
                             return "focused"
                         end if
                     end repeat
