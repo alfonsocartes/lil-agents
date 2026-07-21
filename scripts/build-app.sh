@@ -41,24 +41,36 @@ if ! otool -l "$EXECUTABLE" | grep -q LC_RPATH; then
     install_name_tool -add_rpath "@executable_path/../Frameworks" "$EXECUTABLE"
 fi
 
-# Ad-hoc code signature gives the app a stable identity so macOS TCC
-# (Automation / admin) grants persist across launches. Sign inner→outer
-# (no --deep) so each nested bundle gets its own valid signature before the
-# outer .app is sealed over it.
-echo "==> Ad-hoc signing"
+# Code signature gives the app a stable identity so macOS TCC (Automation /
+# admin) and Keychain "Always Allow" grants persist across launches AND
+# across rebuilds. Prefer a real Developer ID certificate when one is in the
+# keychain (its designated requirement is identity-based, so grants survive
+# recompilation); fall back to ad-hoc (grants are then tied to the exact
+# binary hash and reset on every rebuild). Override with CODESIGN_IDENTITY.
+# Sign inner→outer (no --deep) so each nested bundle gets its own valid
+# signature before the outer .app is sealed over it.
+if [[ -z "${CODESIGN_IDENTITY:-}" ]]; then
+    if security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application"; then
+        CODESIGN_IDENTITY="Developer ID Application"
+    else
+        CODESIGN_IDENTITY="-"
+    fi
+fi
+echo "==> Signing with identity: $CODESIGN_IDENTITY"
 SPARKLE_DIR="$APP_DIR/Contents/Frameworks/Sparkle.framework"
-codesign --force --sign - "$SPARKLE_DIR/Versions/B/XPCServices/Installer.xpc" >/dev/null 2>&1 || \
-    echo "warning: ad-hoc codesign failed for Installer.xpc"
-codesign --force --sign - "$SPARKLE_DIR/Versions/B/XPCServices/Downloader.xpc" >/dev/null 2>&1 || \
-    echo "warning: ad-hoc codesign failed for Downloader.xpc"
-codesign --force --sign - "$SPARKLE_DIR/Versions/B/Autoupdate" >/dev/null 2>&1 || \
-    echo "warning: ad-hoc codesign failed for Autoupdate"
-codesign --force --sign - "$SPARKLE_DIR/Versions/B/Updater.app" >/dev/null 2>&1 || \
-    echo "warning: ad-hoc codesign failed for Updater.app"
-codesign --force --sign - "$SPARKLE_DIR" >/dev/null 2>&1 || \
-    echo "warning: ad-hoc codesign failed for Sparkle.framework"
-codesign --force --sign - "$APP_DIR" >/dev/null 2>&1 || \
-    echo "warning: ad-hoc codesign failed (app will still run, but TCC grants may not persist)"
+codesign --force --sign "$CODESIGN_IDENTITY" "$SPARKLE_DIR/Versions/B/XPCServices/Installer.xpc" >/dev/null 2>&1 || \
+    echo "warning: codesign failed for Installer.xpc"
+codesign --force --sign "$CODESIGN_IDENTITY" "$SPARKLE_DIR/Versions/B/XPCServices/Downloader.xpc" >/dev/null 2>&1 || \
+    echo "warning: codesign failed for Downloader.xpc"
+codesign --force --sign "$CODESIGN_IDENTITY" "$SPARKLE_DIR/Versions/B/Autoupdate" >/dev/null 2>&1 || \
+    echo "warning: codesign failed for Autoupdate"
+codesign --force --sign "$CODESIGN_IDENTITY" "$SPARKLE_DIR/Versions/B/Updater.app" >/dev/null 2>&1 || \
+    echo "warning: codesign failed for Updater.app"
+codesign --force --sign "$CODESIGN_IDENTITY" "$SPARKLE_DIR" >/dev/null 2>&1 || \
+    echo "warning: codesign failed for Sparkle.framework"
+codesign --force --options runtime --sign "$CODESIGN_IDENTITY" "$APP_DIR" >/dev/null 2>&1 || \
+    codesign --force --sign "$CODESIGN_IDENTITY" "$APP_DIR" >/dev/null 2>&1 || \
+    echo "warning: codesign failed (app will still run, but TCC grants may not persist)"
 
 echo "==> Done: $APP_DIR"
 echo "Run it with:  open \"$APP_DIR\"   (or: \"$APP_DIR/Contents/MacOS/AgentDeck\" for logs)"
