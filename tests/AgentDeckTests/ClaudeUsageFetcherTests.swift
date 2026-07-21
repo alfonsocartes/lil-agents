@@ -116,7 +116,13 @@ private let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)   // 2023-11-1
         #expect(keychain.callCount == 0)
     }
 
-    @Test func keychainTriedAtMostOncePerFetcherLifetime() async throws {
+    /// A `nil` Keychain result (item absent/unreadable) is cached for the
+    /// fetcher's whole lifetime and never retried — defense-in-depth against
+    /// hammering `security` every 300s for an item that isn't coming back
+    /// this run. This is the denial path only; a SUCCESSFUL read is a
+    /// different story (see `successfulKeychainReadIsNeverCachedAcrossFetches`
+    /// below).
+    @Test func keychainDenialIsCachedAcrossFetcherLifetime() async throws {
         let dir = makeTempDir(); defer { cleanup(dir) }
         let missingFileURL = dir.appendingPathComponent("nope.json")   // never written
         let keychain = KeychainSpy(returning: nil)                     // simulates denial/absence
@@ -128,9 +134,28 @@ private let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)   // 2023-11-1
         await expectCredentialsMissing(fetcher)
         #expect(keychain.callCount == 1)
 
-        // Second fetch after the first denial must NOT re-prompt.
+        // Second fetch after the first denial must NOT re-attempt the read.
         await expectCredentialsMissing(fetcher)
         #expect(keychain.callCount == 1)
+    }
+
+    /// Unlike a denial, a SUCCESSFUL Keychain read is never cached: the
+    /// `claude` CLI rotates the access token in place, and `UsageStore` polls
+    /// every 300s, so a cached token would go stale. Each `fetchUsage()` call
+    /// must re-invoke the read.
+    @Test func successfulKeychainReadIsNeverCachedAcrossFetches() async throws {
+        let dir = makeTempDir(); defer { cleanup(dir) }
+        let missingFileURL = dir.appendingPathComponent("nope.json")   // never written — forces the Keychain path
+        let keychain = KeychainSpy(returning: claudeCredentialsJSON())
+        let transport = TransportSpy([.success(status: 200, body: Data("{}".utf8))])
+        let fetcher = ClaudeUsageFetcher(
+            credentialsFileURL: { missingFileURL }, keychainRead: keychain.read, transport: transport.handle, now: { fixedNow }
+        )
+
+        _ = try await fetcher.fetchUsage()
+        _ = try await fetcher.fetchUsage()
+
+        #expect(keychain.callCount == 2)
     }
 
     @Test func bothFileAndKeychainMissingMapsToCredentialsMissing() async throws {

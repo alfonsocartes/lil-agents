@@ -1,5 +1,4 @@
 import Foundation
-import Security
 import Synchronization
 
 /// Fetches Claude's usage snapshot from the unofficial OAuth usage endpoint,
@@ -10,14 +9,14 @@ import Synchronization
 /// in"), full stop.
 ///
 /// A `final class` (not the plain `struct` most DI-seam types in this app
-/// use) so the Keychain once-per-launch cache below can live on an
-/// INSTANCE-level `Mutex` rather than a `static` one: the seam-injected
-/// instance in ClaudeUsageFetcherTests must exercise the exact same cache a
-/// production instance would, and a `static` cache would leak state across
-/// unrelated tests/instances. Every stored property is either an immutable
-/// `let` of a `Sendable` closure/value type or lives inside a `Mutex`, so
-/// `Sendable` conformance below is checked, not asserted — no `@unchecked
-/// Sendable` (see EventListener.swift for the identical pattern).
+/// use) so the Keychain denial flag below can live on an INSTANCE-level
+/// `Mutex` rather than a `static` one: the seam-injected instance in
+/// ClaudeUsageFetcherTests must exercise the exact same flag a production
+/// instance would, and a `static` flag would leak state across unrelated
+/// tests/instances. Every stored property is either an immutable `let` of a
+/// `Sendable` closure/value type or lives inside a `Mutex`, so `Sendable`
+/// conformance below is checked, not asserted — no `@unchecked Sendable`
+/// (see EventListener.swift for the identical pattern).
 final class ClaudeUsageFetcher: UsageProviding, Sendable {
     private static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 
@@ -29,9 +28,10 @@ final class ClaudeUsageFetcher: UsageProviding, Sendable {
 
     /// Reads the CLI's Keychain item (generic password, service `"Claude
     /// Code-credentials"`) and returns its raw JSON payload, or `nil` on any
-    /// failure/denial. Test seam: production wraps `SecItemCopyMatching`;
-    /// tests inject a spy that never touches the real Keychain and can
-    /// simulate a user's "Don't Allow".
+    /// failure/absence. Test seam: production shells out to the `security`
+    /// command-line tool (see `defaultKeychainRead()` below for why); tests
+    /// inject a spy that never touches the real Keychain and can simulate an
+    /// absent/unreadable item.
     let keychainRead: @Sendable () -> Data?
 
     /// HTTP transport. Test seam: production wraps
@@ -44,12 +44,10 @@ final class ClaudeUsageFetcher: UsageProviding, Sendable {
     /// a delta-seconds interval.
     let now: @Sendable () -> Date
 
-    /// Keychain once-per-launch cache (see `credentials()` below for the full
-    /// prompt-storm rationale): `nil` = not yet attempted this instance's
-    /// lifetime; `.some(nil)` = attempted and got nothing back
-    /// (denied/absent) — cached so we NEVER re-prompt; `.some(.some(data))` =
-    /// attempted and got a payload.
-    private let keychainCache = Mutex<Data??>(nil)
+    /// Set once `keychainRead()` has returned `nil` (item genuinely absent or
+    /// otherwise unreadable) — see `credentials()` below for why a denial,
+    /// and only a denial, is cached for this instance's whole lifetime.
+    private let keychainDenied = Mutex<Bool>(false)
 
     init(
         credentialsFileURL: @escaping @Sendable () -> URL = ClaudeUsageFetcher.defaultCredentialsFileURL,
@@ -70,20 +68,81 @@ final class ClaudeUsageFetcher: UsageProviding, Sendable {
             .appendingPathComponent(".claude/.credentials.json")
     }
 
-    /// Production Keychain read. Shows a one-time macOS consent prompt
-    /// naming the app the first time it's ever called for a given code
-    /// signature — which is exactly why `credentials()` below only calls
-    /// this once per fetcher lifetime.
+    /// Production Keychain read. Deliberately does NOT call `SecItemCopyMatching`
+    /// in-process: the `claude` CLI writes this item via `security
+    /// add-generic-password -U`, which leaves it with a partition list
+    /// containing only `apple-tool:` — an in-process `SecItemCopyMatching`
+    /// call is a different client than the item's ACL expects, so macOS pops
+    /// a Keychain password prompt, and the item is deleted/recreated on every
+    /// `claude` logout/login, wiping any manual partition-list fix. Instead
+    /// this shells out to `/usr/bin/security find-generic-password -w`: the
+    /// client the OS sees is the Apple-signed `security` tool itself, which
+    /// is always in the fresh item's ACL (it's the creator) and always
+    /// passes the `apple-tool:` partition check — silent forever, survives
+    /// re-login, independent of this app's own code signature.
+    ///
+    /// Bounded by a watchdog so a hung `security` process (e.g. some future
+    /// macOS surfacing a dialog after all) can never block `fetchUsage()`
+    /// indefinitely; a timeout is treated the same as any other failure and
+    /// returns `nil`.
     static func defaultKeychainRead() -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "Claude Code-credentials",
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-w", "-s", "Claude Code-credentials"]
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe   // attached (not inherited) and ignored
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        // Watchdog: the read is expected to be silent, but guarantee this
+        // function always returns within a bounded time regardless.
+        let timedOut = Mutex(false)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
+            if process.isRunning {
+                timedOut.withLock { $0 = true }
+                process.terminate()
+            }
+        }
+
+        let outputData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard !timedOut.withLock({ $0 }), process.terminationStatus == 0 else { return nil }
+
+        let trimmed = String(data: outputData, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed, !trimmed.isEmpty else { return nil }
+
+        // `-w` prints the raw payload when it's valid printable text, but
+        // falls back to a hex dump when it isn't — decode that case back
+        // into raw bytes rather than returning the hex string itself.
+        if !trimmed.hasPrefix("{"), trimmed.allSatisfy({ $0.isHexDigit }) {
+            return hexDecode(trimmed)
+        }
+        return Data(trimmed.utf8)
+    }
+
+    /// Decodes a hex string (pairs of hex digits) into raw bytes — used for
+    /// `security find-generic-password -w`'s hex-dump fallback when the
+    /// stored payload isn't valid printable text. Returns `nil` on an
+    /// odd-length string or any unparseable byte pair.
+    private static func hexDecode(_ hex: String) -> Data? {
+        guard hex.count.isMultiple(of: 2) else { return nil }
+        var data = Data(capacity: hex.count / 2)
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let nextIndex = hex.index(index, offsetBy: 2)
+            guard let byte = UInt8(hex[index..<nextIndex], radix: 16) else { return nil }
+            data.append(byte)
+            index = nextIndex
+        }
         return data
     }
 
@@ -140,15 +199,20 @@ final class ClaudeUsageFetcher: UsageProviding, Sendable {
         var expiresAt: Int64?   // epoch-ms
     }
 
-    /// File-first credential read, Keychain fallback tried AT MOST ONCE per
-    /// fetcher lifetime (prompt-storm guard). Reading the file never prompts
-    /// anything, so it's attempted on every single fetch; the Keychain path
-    /// is the one that can show a macOS consent dialog naming this app, and
-    /// with ad-hoc signing "Always Allow" doesn't reliably stick across
-    /// rebuilds — so it's cached (including an outright denial) the first
-    /// time it's attempted and never retried again for the life of this
-    /// instance, no matter how many times `fetchUsage()` is subsequently
-    /// called (e.g. by `UsageStore`'s 300s poll).
+    /// File-first credential read, with a Keychain fallback. Reading the
+    /// file never prompts anything, so it's attempted on every single fetch;
+    /// the Keychain path shells out to Apple's `security` tool (see
+    /// `defaultKeychainRead()`), which passes the item's `apple-tool:`
+    /// partition silently and needs no user grant — so a SUCCESSFUL read is
+    /// NOT cached and is re-attempted on every `fetchUsage()` call, which
+    /// matters because the `claude` CLI rotates the access token in place
+    /// and `UsageStore` polls every 300s; a cached token would go stale. A
+    /// `nil` result, by contrast, IS cached for this instance's whole
+    /// lifetime and never retried — purely defense-in-depth against the edge
+    /// case where the item is genuinely absent, at the cost of a transient
+    /// absence at the first fetch sticking as "missing" until the app is
+    /// relaunched (an acceptable tradeoff: the alternative is hammering
+    /// `security` every 300s for an item that isn't coming back this run).
     private func credentials() throws -> Credentials {
         if let data = try? Data(contentsOf: credentialsFileURL()),
            let credentials = try? Self.decodeCredentials(data) {
@@ -161,12 +225,12 @@ final class ClaudeUsageFetcher: UsageProviding, Sendable {
     }
 
     private func keychainData() -> Data? {
-        keychainCache.withLock { cached in
-            if let cached { return cached }
-            let result = keychainRead()
-            cached = result
-            return result
+        if keychainDenied.withLock({ $0 }) { return nil }
+        let result = keychainRead()
+        if result == nil {
+            keychainDenied.withLock { $0 = true }
         }
+        return result
     }
 
     private struct CredentialsFile: Decodable {

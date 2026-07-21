@@ -65,7 +65,7 @@ struct SettingsView: View {
             Toggle("Show Claude usage", isOn: $settings.claudeUsageEnabled)
             Toggle("Show Codex usage", isOn: $settings.codexUsageEnabled)
 
-            Text("Reads the CLI's local sign-in and contacts Anthropic/OpenAI's servers for your current usage. Claude may show a one-time Keychain permission prompt if `~/.claude/.credentials.json` is absent.")
+            Text("Reads the CLI's local sign-in and contacts Anthropic/OpenAI's servers for your current usage. Claude's credentials are read via macOS's built-in `security` tool, so no permission prompt appears.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
