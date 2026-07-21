@@ -33,10 +33,12 @@ extension Array where Element == Session {
 /// were intentionally removed; those controls live in the menu bar.
 ///
 /// Design: minimal at rest, detail on intent (hover).
-/// - At rest every row is ONE line — status dot + project name. That's the
-///   overlay's whole resting job: which projects, what state. Elapsed time
-///   and the duplicate-disambiguation detail are hover-revealed, so the
-///   panel carries no reserved trailing column and no second lines.
+/// - At rest every row is ONE line — status dot + project name, plus, for
+///   sessions that are WAITING ON THE USER (idle / needs-input, never
+///   working), a quiet trailing "how long" caption ("5m") so the cost of
+///   ignoring them is visible without a hover. Everything else — tool, tty,
+///   the duplicate-disambiguation detail — stays hover-revealed, so the
+///   panel still carries no second lines.
 /// - Hovering a row reveals a trailing caption (tool/tty/elapsed) INSIDE the
 ///   row's fixed bounds: the name yields width by truncating further, but the
 ///   row height, the other rows, and the panel frame never move. No layout
@@ -162,15 +164,26 @@ struct OverlayView: View {
 /// Forcing both through one view meant every overlay decision risked the
 /// menu, so the shared row now belongs to the menu alone.
 ///
-/// Rest vs hover:
-/// - Rest: dot + name. One line, fixed height.
-/// - Hover: a trailing caption fades in — the duplicate-disambiguation
-///   detail (or the tool name for unique rows) plus elapsed time when it's
-///   ≥ 1 minute ("now" carried nothing and is simply suppressed). The
-///   caption takes layout priority, so the NAME truncates to make room —
-///   safe, because by the time the user hovers they've already read the
-///   name; the reveal answers the follow-up questions (which pane? how
-///   long?). Nothing outside the row's fixed bounds changes.
+/// Rest vs hover — one trailing caption slot, two occupants:
+/// - Rest: dot + name; and for sessions waiting on the user (idle /
+///   needs-input) the slot shows how long they've been waiting ("5m",
+///   "1h"). `lastUpdate` is the right clock for this: hook events stop
+///   arriving the moment a session enters a waiting state and resume only
+///   when the user acts, so "last event" and "waiting since" coincide
+///   exactly for these rows. Working rows show nothing at rest — elapsed
+///   time on an actively-churning session answers no question, and a
+///   permanent column would cost every name its width. Same design
+///   language as the usage surfaces: `.caption`/`.secondary`, no new color
+///   — the dot and tint already carry the urgency.
+/// - Hover: the same slot swaps to the duplicate-disambiguation detail (or
+///   the tool name for unique rows) plus elapsed time when it's ≥ 1 minute
+///   ("now" carried nothing and is simply suppressed) — a strict superset
+///   of the rest caption, so hovering never loses information. The caption
+///   takes layout priority, so the NAME truncates to make room — at rest
+///   the caption is a few characters and by hover time the user has
+///   already read the name; the reveal answers the follow-up questions
+///   (which pane? how long?). Nothing outside the row's fixed bounds
+///   changes.
 private struct OverlaySessionRow: View {
     let session: Session
     /// Disambiguating hover detail, or nil when the project name alone is
@@ -199,13 +212,15 @@ private struct OverlaySessionRow: View {
 
                 Spacer(minLength: 8)
 
-                if isHovering {
-                    Text(hoverDetail)
+                if let caption = trailingCaption {
+                    Text(caption)
                         .font(.caption)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        // The reveal wins the width fight; the name truncates.
+                        // The caption wins the width fight; the name
+                        // truncates (tail-only, per the fixed-width layout
+                        // rationale above).
                         .layoutPriority(1)
                         .transition(.opacity)
                 }
@@ -239,6 +254,16 @@ private struct OverlaySessionRow: View {
         .help("Jump to this session's pane")
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// The trailing slot's current occupant, or nil for an empty slot (a
+    /// working row at rest, or a waiting row under a minute old). One
+    /// computed property — not two conditional views — so hover and rest can
+    /// never render simultaneously and fight for the same space.
+    private var trailingCaption: String? {
+        if isHovering { return hoverDetail }
+        guard session.status != .working, elapsedMinutes >= 1 else { return nil }
+        return elapsedLabel
     }
 
     /// What hover reveals, inside the row's own bounds. Duplicates show their
@@ -359,17 +384,26 @@ private func previewUsageStore() -> UsageStore {
     OverlayView(
         store: .previewStore([
             // Two sessions in the SAME project — one line each at rest; the
-            // disambiguating detail (tool · tty) only appears on hover.
+            // disambiguating detail (tool · tty) only appears on hover. The
+            // needs-input one has been waiting 75 minutes, so it shows "1h"
+            // at rest; the working one shows nothing.
             overlaySample(id: "b", tool: .claude, status: .working,
                           cwd: "/Users/alfonso/Developer/p2-marketplace", tty: "/dev/ttys004", minutesAgo: 2),
             overlaySample(id: "a", tool: .codex, status: .waitingApproval,
                           cwd: "/Users/alfonso/Developer/p2-marketplace", tty: "/dev/ttys009", minutesAgo: 75),
-            // A lone session — hover shows tool + elapsed.
+            // A lone idle session — waiting on the user, so its "14m" shows
+            // at rest; hover swaps in tool + elapsed.
             overlaySample(id: "c", tool: .claude, status: .idle,
                           cwd: "/Users/alfonso/Developer/Tools/ai-sessions", tty: "/dev/ttys012", minutesAgo: 14),
-            // A fresh lone session — hover shows just the tool ("now" suppressed).
+            // A fresh lone session — working, so no rest caption regardless
+            // of age; hover shows just the tool ("now" suppressed).
             overlaySample(id: "d", tool: .codex, status: .working,
                           cwd: "/Users/alfonso/Developer/wandity-site", tty: "/dev/ttys015", minutesAgo: 0),
+            // A long-named idle session — the rest caption must win the
+            // width fight and the name must tail-truncate around it.
+            overlaySample(id: "e", tool: .claude, status: .idle,
+                          cwd: "/Users/alfonso/Developer/extremely-long-project-name-for-truncation",
+                          tty: "/dev/ttys020", minutesAgo: 42),
         ]),
         usage: previewUsageStore()
     )
