@@ -21,13 +21,15 @@ struct AgentDeckApp: App {
                 store: appDelegate.services.store,
                 awake: appDelegate.services.awake,
                 overlay: appDelegate.services.overlay,
+                usage: appDelegate.services.usage,
                 updater: appDelegate.services.updater,
                 activationPolicy: appDelegate.services.activationPolicy
             )
         } label: {
             StatusIconLabel(
                 store: appDelegate.services.store,
-                awake: appDelegate.services.awake
+                awake: appDelegate.services.awake,
+                usage: appDelegate.services.usage
             )
         }
         .menuBarExtraStyle(.window)

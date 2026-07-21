@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Content of the SwiftUI `Settings` scene. Two sections: the notification
-/// preferences bound directly to `AppSettings`, and — visually separated at the
-/// bottom — the destructive Uninstall action (which relocated here out of the
-/// menu-bar dropdown, behind a native confirmation dialog).
+/// Content of the SwiftUI `Settings` scene. Three sections: the notification
+/// preferences and the AI usage opt-in toggles, both bound directly to
+/// `AppSettings`, and — visually separated at the bottom — the destructive
+/// Uninstall action (which relocated here out of the menu-bar dropdown,
+/// behind a native confirmation dialog).
 struct SettingsView: View {
     @Bindable var settings: AppSettings
 
@@ -15,6 +16,10 @@ struct SettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             notificationsSection
+
+            Divider()
+
+            usageSection
 
             Divider()
 
@@ -41,6 +46,26 @@ struct SettingsView: View {
             .foregroundStyle(settings.notificationsEnabled ? .primary : .secondary)
 
             Text("Alerts fire once, right when a session starts needing you — not on every update while it waits.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Opt-in toggles for the two usage-tracking providers (default off —
+    /// see `AppSettings.claudeUsageEnabled`/`codexUsageEnabled`). Both are
+    /// read-only against undocumented endpoints: enabling one starts polling
+    /// that provider's CLI credentials and its own vendor's servers, nothing
+    /// else.
+    private var usageSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("AI usage")
+                .font(.headline)
+
+            Toggle("Show Claude usage", isOn: $settings.claudeUsageEnabled)
+            Toggle("Show Codex usage", isOn: $settings.codexUsageEnabled)
+
+            Text("Reads the CLI's local sign-in and contacts Anthropic/OpenAI's servers for your current usage. Claude may show a one-time Keychain permission prompt if `~/.claude/.credentials.json` is absent.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -20,6 +20,10 @@ struct MenuBarContentView: View {
     let store: SessionStore
     let awake: StayAwakeController
     let overlay: OverlayController
+    /// Claude/Codex usage state, rendered as `UsageMenuSection` between the
+    /// header and the session list, and refreshed (throttled) whenever the
+    /// dropdown appears.
+    let usage: UsageStore
     @ObservedObject var updater: UpdaterController
 
     /// Flips activation policy so the `Settings` scene comes frontmost with a
@@ -44,6 +48,10 @@ struct MenuBarContentView: View {
             header
             Divider()
                 .padding(.vertical, 4)
+
+            // Renders EmptyView (and adds no divider of its own) when both
+            // providers are disabled — see UsageMenuSection's doc comment.
+            UsageMenuSection(usage: usage)
 
             sessionsSection
 
@@ -109,6 +117,7 @@ struct MenuBarContentView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(width: 280)
+        .onAppear { usage.refreshIfStale() }
     }
 
     private var header: some View {
@@ -161,22 +170,76 @@ struct MenuBarContentView: View {
 
 // MARK: - Status-item label
 
-/// The `MenuBarExtra` label. Observes the store and stay-awake controller and
-/// renders the exact status-item pixels AppKit used, via AttentionIcon.
-/// `.renderingMode(.original)` keeps the traffic-light tint (a template image
-/// would be recolored by the menu bar). Falls back to a plain SF Symbol if the
-/// NSImage is ever nil.
+/// The `MenuBarExtra` label. Observes the store, stay-awake controller, and
+/// usage store: the attention dot (unchanged) plus, when at least one usage
+/// provider is enabled, two stacked mini-rows of symbol + percent beside it.
+///
+/// The attention image renders via AttentionIcon with
+/// `.renderingMode(.original)` to keep its traffic-light tint (a template
+/// image would be recolored by the menu bar), falling back to a plain SF
+/// Symbol if the NSImage is ever nil.
+///
+/// When usage tracking is enabled the whole label — attention icon plus the
+/// two usage mini-rows — is composited into ONE bitmap by
+/// `UsageMenuBarIcon.labelImage` (see that type for why: the label flattens
+/// native SwiftUI stacks and won't render drawingHandler/template images, so
+/// a single eagerly-rasterized `Image(nsImage:)` — the exact pattern the
+/// attention icon already ships — is the only reliable vehicle). The
+/// `colorScheme` environment drives the explicit white/black paint and
+/// re-renders the label when the system appearance flips.
 struct StatusIconLabel: View {
     let store: SessionStore
     let awake: StayAwakeController
+    let usage: UsageStore
+
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        if !usageRows.isEmpty,
+           let composite = UsageMenuBarIcon.labelImage(
+               attention: AttentionIcon.image(attention: store.attention, isAwake: awake.isAwake),
+               rows: usageRows,
+               darkAppearance: colorScheme == .dark
+           ) {
+            Image(nsImage: composite)
+                .renderingMode(.original)
+        } else {
+            attentionImage
+        }
+    }
+
+    /// Usage disabled (or composite construction failed): today's exact
+    /// pre-feature appearance, untouched.
+    @ViewBuilder
+    private var attentionImage: some View {
         if let image = AttentionIcon.image(attention: store.attention, isAwake: awake.isAwake) {
             Image(nsImage: image)
                 .renderingMode(.original)
         } else {
             Image(systemName: store.attention.symbolName)
         }
+    }
+
+    /// Claude's row shows its 5-hour percent (the user's explicit choice);
+    /// Codex's shows its weekly percent (currently the only window Codex
+    /// exposes). A `.disabled` provider contributes no row at all.
+    private var usageRows: [UsageMenuBarIcon.Row] {
+        var rows: [UsageMenuBarIcon.Row] = []
+        if usage.claude != .disabled {
+            rows.append(UsageMenuBarIcon.Row(
+                symbolName: AgentTool.claude.symbol,
+                text: UsageFormatting.percentLabel(usage.claude.usage?.session?.percent),
+                dimmed: usage.claude.isDimmed
+            ))
+        }
+        if usage.codex != .disabled {
+            rows.append(UsageMenuBarIcon.Row(
+                symbolName: AgentTool.codex.symbol,
+                text: UsageFormatting.percentLabel(usage.codex.usage?.weekly?.percent),
+                dimmed: usage.codex.isDimmed
+            ))
+        }
+        return rows
     }
 }
 
@@ -283,16 +346,36 @@ private extension Session {
     }
 }
 
+/// Sample usage: both providers enabled and available, so the preview shows
+/// `UsageMenuSection`'s full detail (percent + reset time per window).
+@MainActor
+private func previewUsageStore() -> UsageStore {
+    .previewStore(
+        claude: .available(ProviderUsage(
+            session: UsageWindow(percent: 62, resetsAt: Date().addingTimeInterval(3 * 3600)),
+            weekly: UsageWindow(percent: 41, resetsAt: Date().addingTimeInterval(4 * 86400)),
+            fetchedAt: Date()
+        )),
+        codex: .available(ProviderUsage(
+            session: nil,
+            weekly: UsageWindow(percent: 30, resetsAt: Date().addingTimeInterval(2 * 86400)),
+            fetchedAt: Date()
+        ))
+    )
+}
+
 @MainActor
 private func previewMenu(sessions: [Session], awake: Bool) -> some View {
     let store = SessionStore.previewStore(sessions)
     let stayAwake = StayAwakeController()
-    let overlay = OverlayController(store: store)
+    let usage = previewUsageStore()
+    let overlay = OverlayController(store: store, usage: usage)
     let updater = UpdaterController()
     return MenuBarContentView(
         store: store,
         awake: stayAwake,
         overlay: overlay,
+        usage: usage,
         updater: updater,
         activationPolicy: ActivationPolicyController()
     )

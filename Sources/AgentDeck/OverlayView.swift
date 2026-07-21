@@ -72,14 +72,22 @@ extension Array where Element == Session {
 ///   honest without the store having to publish anything.
 struct OverlayView: View {
     let store: SessionStore
+    /// Claude/Codex usage state, rendered as `OverlayUsageHeader` above the
+    /// session list (and above `emptyHint`) — see that type for the
+    /// disabled/dimmed rules. Plain fills only inside the header; the single
+    /// `.glassEffect` below stays the panel's only glass layer.
+    let usage: UsageStore
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
-            Group {
-                if store.sessions.isEmpty {
-                    emptyHint
-                } else {
-                    sessionList(now: timeline.date)
+            VStack(spacing: 0) {
+                OverlayUsageHeader(usage: usage)
+                Group {
+                    if store.sessions.isEmpty {
+                        emptyHint
+                    } else {
+                        sessionList(now: timeline.date)
+                    }
                 }
             }
         }
@@ -329,27 +337,54 @@ private struct PreviewDesktopBackdrop: View {
     }
 }
 
+/// Sample usage: both providers enabled and available, matching the feature
+/// plan's own example row ("✳ 95%  ⬡ 15%").
+@MainActor
+private func previewUsageStore() -> UsageStore {
+    .previewStore(
+        claude: .available(ProviderUsage(
+            session: UsageWindow(percent: 95, resetsAt: Date().addingTimeInterval(3 * 3600)),
+            weekly: UsageWindow(percent: 41, resetsAt: Date().addingTimeInterval(4 * 86400)),
+            fetchedAt: Date()
+        )),
+        codex: .available(ProviderUsage(
+            session: nil,
+            weekly: UsageWindow(percent: 15, resetsAt: Date().addingTimeInterval(2 * 86400)),
+            fetchedAt: Date()
+        ))
+    )
+}
+
 #Preview("Overlay — sessions") {
-    OverlayView(store: .previewStore([
-        // Two sessions in the SAME project — one line each at rest; the
-        // disambiguating detail (tool · tty) only appears on hover.
-        overlaySample(id: "b", tool: .claude, status: .working,
-                      cwd: "/Users/alfonso/Developer/p2-marketplace", tty: "/dev/ttys004", minutesAgo: 2),
-        overlaySample(id: "a", tool: .codex, status: .waitingApproval,
-                      cwd: "/Users/alfonso/Developer/p2-marketplace", tty: "/dev/ttys009", minutesAgo: 75),
-        // A lone session — hover shows tool + elapsed.
-        overlaySample(id: "c", tool: .claude, status: .idle,
-                      cwd: "/Users/alfonso/Developer/Tools/ai-sessions", tty: "/dev/ttys012", minutesAgo: 14),
-        // A fresh lone session — hover shows just the tool ("now" suppressed).
-        overlaySample(id: "d", tool: .codex, status: .working,
-                      cwd: "/Users/alfonso/Developer/wandity-site", tty: "/dev/ttys015", minutesAgo: 0),
-    ]))
+    OverlayView(
+        store: .previewStore([
+            // Two sessions in the SAME project — one line each at rest; the
+            // disambiguating detail (tool · tty) only appears on hover.
+            overlaySample(id: "b", tool: .claude, status: .working,
+                          cwd: "/Users/alfonso/Developer/p2-marketplace", tty: "/dev/ttys004", minutesAgo: 2),
+            overlaySample(id: "a", tool: .codex, status: .waitingApproval,
+                          cwd: "/Users/alfonso/Developer/p2-marketplace", tty: "/dev/ttys009", minutesAgo: 75),
+            // A lone session — hover shows tool + elapsed.
+            overlaySample(id: "c", tool: .claude, status: .idle,
+                          cwd: "/Users/alfonso/Developer/Tools/ai-sessions", tty: "/dev/ttys012", minutesAgo: 14),
+            // A fresh lone session — hover shows just the tool ("now" suppressed).
+            overlaySample(id: "d", tool: .codex, status: .working,
+                          cwd: "/Users/alfonso/Developer/wandity-site", tty: "/dev/ttys015", minutesAgo: 0),
+        ]),
+        usage: previewUsageStore()
+    )
     .padding(40)
     .background(PreviewDesktopBackdrop())
 }
 
 #Preview("Overlay — empty") {
-    OverlayView(store: .previewStore([]))
+    OverlayView(store: .previewStore([]), usage: previewUsageStore())
+        .padding(40)
+        .background(PreviewDesktopBackdrop())
+}
+
+#Preview("Overlay — empty, usage disabled") {
+    OverlayView(store: .previewStore([]), usage: .previewStore())
         .padding(40)
         .background(PreviewDesktopBackdrop())
 }

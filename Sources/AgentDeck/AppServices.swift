@@ -22,6 +22,13 @@ final class AppServices {
     /// Notification preferences, persisted to `UserDefaults`.
     let settings = AppSettings()
 
+    /// Claude/Codex usage-tracking state (percent + reset time per window),
+    /// shown in the menu-bar icon, overlay header, and dropdown when the
+    /// user opts in via Settings. Constructed after `settings` (needs it for
+    /// the two opt-in toggles) and before `overlay` (passed into
+    /// `OverlayController` so `show()` can trigger a refresh).
+    let usage: UsageStore
+
     /// Stay-awake (lid-closed) control backing the menu item.
     let awake = StayAwakeController()
 
@@ -38,6 +45,7 @@ final class AppServices {
     let activationPolicy = ActivationPolicyController()
 
     init() {
-        overlay = OverlayController(store: store)
+        usage = UsageStore(settings: settings)
+        overlay = OverlayController(store: store, usage: usage)
     }
 }

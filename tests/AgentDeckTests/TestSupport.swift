@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 @testable import AgentDeck
 
 // MARK: - Notifier spy
@@ -62,4 +63,81 @@ func makeNonExecutableFile(at url: URL) -> URL {
 
 func cleanup(_ url: URL) {
     try? FileManager.default.removeItem(at: url)
+}
+
+// MARK: - Usage fetcher spies (Claude/CodexUsageFetcher)
+
+/// Records every request handed to an injected `transport` closure and
+/// replays canned `(Data, HTTPURLResponse)` results (or throws) in the order
+/// given — the LAST configured result repeats for any call beyond the
+/// list's length, so a test that only cares about the first response can
+/// still assert "transport never called again" style expectations by
+/// passing a single-element list. `Mutex`-backed (never `@unchecked
+/// Sendable`) so it's safe to share between the `@Sendable` transport
+/// closure and the test's assertions — mirrors EventListener.swift's use of
+/// `Synchronization.Mutex`.
+final class TransportSpy: Sendable {
+    enum StubResult {
+        case success(status: Int, headers: [String: String] = [:], body: Data)
+        case failure(Error)
+    }
+
+    private struct State {
+        var callCount = 0
+        var results: [StubResult]
+        var requests: [URLRequest] = []
+    }
+
+    private let state: Mutex<State>
+
+    init(_ results: [StubResult]) {
+        state = Mutex(State(results: results))
+    }
+
+    var callCount: Int { state.withLock { $0.callCount } }
+
+    /// Every request handed to `handle`, in order — lets tests assert on
+    /// headers (e.g. "ChatGPT-Account-Id omitted when absent") without the
+    /// stub needing to know in advance what to check.
+    var requests: [URLRequest] { state.withLock { $0.requests } }
+
+    func handle(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        let result = state.withLock { s -> StubResult in
+            let index = min(s.callCount, s.results.count - 1)
+            let picked = s.results[index]
+            s.callCount += 1
+            s.requests.append(request)
+            return picked
+        }
+        switch result {
+        case .success(let status, let headers, let body):
+            let http = HTTPURLResponse(
+                url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers
+            )!
+            return (body, http)
+        case .failure(let error):
+            throw error
+        }
+    }
+}
+
+/// Records how many times a `keychainRead` seam was invoked and returns a
+/// fixed canned value every time. `ClaudeUsageFetcherTests` uses the call
+/// count to assert the once-per-launch cache actually suppresses repeat
+/// Keychain reads (including after a denial).
+final class KeychainSpy: Sendable {
+    private let state: Mutex<(callCount: Int, result: Data?)>
+
+    init(returning result: Data?) {
+        state = Mutex((0, result))
+    }
+
+    var callCount: Int { state.withLock { $0.callCount } }
+
+    func read() -> Data? {
+        state.withLock { s in
+            s.callCount += 1
+            return s.result
+        }
+    }
 }

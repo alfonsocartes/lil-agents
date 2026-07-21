@@ -18,15 +18,21 @@ final class OverlayController {
     private(set) var isVisible: Bool = false
 
     private let store: SessionStore
+    private let usage: UsageStore
     private var panel: FloatingPanel<OverlayView>?
 
-    init(store: SessionStore) {
+    init(store: SessionStore, usage: UsageStore) {
         self.store = store
+        self.usage = usage
     }
 
     func show() {
         let panel = panel ?? makePanel()
         self.panel = panel
+        // Kick off a refresh every time the overlay is raised, throttled by
+        // `refreshIfStale`'s own `lastAttemptAt`/`retryAfterUntil` gates so
+        // repeated toggling never spams either provider's API.
+        usage.refreshIfStale()
         // `orderFrontRegardless` (not `makeKeyAndOrderFront`) — the overlay must
         // never steal key focus from the terminal underneath.
         panel.orderFrontRegardless()
@@ -45,6 +51,6 @@ final class OverlayController {
     private func makePanel() -> FloatingPanel<OverlayView> {
         // FloatingPanel's init calls setFrameAutosaveName("AgentDeckPanel"),
         // which is what persists the user's dragged position across launches.
-        FloatingPanel(content: OverlayView(store: store))
+        FloatingPanel(content: OverlayView(store: store, usage: usage))
     }
 }

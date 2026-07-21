@@ -14,6 +14,8 @@ final class AppSettings {
         static let notifyOnApproval = "notifications.notifyOnApproval"
         static let notifyOnIdle = "notifications.notifyOnIdle"
         static let playSound = "notifications.playSound"
+        static let claudeUsageEnabled = "usage.claudeEnabled"
+        static let codexUsageEnabled = "usage.codexEnabled"
     }
 
     /// Master switch. When off, no notification of any kind fires.
@@ -36,11 +38,27 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(playSound, forKey: Keys.playSound) }
     }
 
+    /// Opt-in for Claude usage tracking (Settings toggle). Default **false**:
+    /// reading credentials/polling the network on every update would be a
+    /// surprise, and the Keychain fallback path can show a one-time macOS
+    /// consent prompt — both should only happen after an explicit opt-in.
+    var claudeUsageEnabled: Bool {
+        didSet { UserDefaults.standard.set(claudeUsageEnabled, forKey: Keys.claudeUsageEnabled) }
+    }
+
+    /// Opt-in for Codex/ChatGPT usage tracking (Settings toggle). Default
+    /// **false** — same rationale as `claudeUsageEnabled`.
+    var codexUsageEnabled: Bool {
+        didSet { UserDefaults.standard.set(codexUsageEnabled, forKey: Keys.codexUsageEnabled) }
+    }
+
     init() {
         let defaults = UserDefaults.standard
         notificationsEnabled = defaults.object(forKey: Keys.notificationsEnabled) as? Bool ?? true
         notifyOnApproval = defaults.object(forKey: Keys.notifyOnApproval) as? Bool ?? true
         notifyOnIdle = defaults.object(forKey: Keys.notifyOnIdle) as? Bool ?? true
         playSound = defaults.object(forKey: Keys.playSound) as? Bool ?? true
+        claudeUsageEnabled = defaults.object(forKey: Keys.claudeUsageEnabled) as? Bool ?? false
+        codexUsageEnabled = defaults.object(forKey: Keys.codexUsageEnabled) as? Bool ?? false
     }
 }
