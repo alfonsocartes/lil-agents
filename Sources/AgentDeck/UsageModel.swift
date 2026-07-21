@@ -92,6 +92,45 @@ enum ProviderUsageState: Equatable {
     }
 }
 
+/// How urgently a usage window needs the user's attention, derived purely
+/// from its percent. This is the shared design vocabulary for all three
+/// usage surfaces (menu bar bitmap, dropdown section, overlay header):
+/// quiet monochrome below 75%, amber from 75%, red from 90% — the same
+/// thresholds everywhere, so a color glimpsed in the menu bar means exactly
+/// what it means in the dropdown. Color *values* live with each surface
+/// (explicit `NSColor`s baked into the menu bar bitmap in
+/// UsageMenuBarIcon.swift; semantic SwiftUI colors in UsageGauge.swift)
+/// because the menu bar can't use semantic colors and SwiftUI shouldn't use
+/// baked ones; only the classification is shared.
+enum UsageUrgency: Equatable, Sendable {
+    /// Plenty of headroom (< 75% displayed) — or nothing to show at all
+    /// (nil percent): placeholders never shout.
+    case normal
+    /// Approaching the cap (>= 75% displayed).
+    case elevated
+    /// About to run out (>= 90% displayed).
+    case critical
+
+    /// Classifies on the ROUNDED percent — the same integer
+    /// `UsageFormatting.percentLabel` prints — so the tier can never
+    /// disagree with the number next to it (89.6 displays as "90%" and must
+    /// therefore be red, not amber).
+    init(percent: Double?) {
+        guard let percent else {
+            self = .normal
+            return
+        }
+        let displayed = Int(percent.rounded())
+        if displayed >= 90 {
+            self = .critical
+        } else if displayed >= 75 {
+            self = .elevated
+        } else {
+            self = .normal
+        }
+    }
+}
+
 /// Pure string-formatting helpers shared by the menu bar icon, overlay
 /// header, and dropdown section — kept here (rather than duplicated in each
 /// UI file) so the "62%" / "resets 3 PM" phrasing is defined exactly once.

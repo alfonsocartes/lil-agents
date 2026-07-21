@@ -222,20 +222,26 @@ struct StatusIconLabel: View {
 
     /// Claude's row shows its 5-hour percent (the user's explicit choice);
     /// Codex's shows its weekly percent (currently the only window Codex
-    /// exposes). A `.disabled` provider contributes no row at all.
+    /// exposes). A `.disabled` provider contributes no row at all. The raw
+    /// percent rides along beside the formatted text so the bitmap can draw
+    /// its micro gauge and pick the row's urgency tint (UsageMenuBarIcon).
     private var usageRows: [UsageMenuBarIcon.Row] {
         var rows: [UsageMenuBarIcon.Row] = []
         if usage.claude != .disabled {
+            let percent = usage.claude.usage?.session?.percent
             rows.append(UsageMenuBarIcon.Row(
                 symbolName: AgentTool.claude.symbol,
-                text: UsageFormatting.percentLabel(usage.claude.usage?.session?.percent),
+                text: UsageFormatting.percentLabel(percent),
+                percent: percent,
                 dimmed: usage.claude.isDimmed
             ))
         }
         if usage.codex != .disabled {
+            let percent = usage.codex.usage?.weekly?.percent
             rows.append(UsageMenuBarIcon.Row(
                 symbolName: AgentTool.codex.symbol,
-                text: UsageFormatting.percentLabel(usage.codex.usage?.weekly?.percent),
+                text: UsageFormatting.percentLabel(percent),
+                percent: percent,
                 dimmed: usage.codex.isDimmed
             ))
         }

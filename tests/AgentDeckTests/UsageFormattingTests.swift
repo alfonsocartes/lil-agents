@@ -38,3 +38,22 @@ import Testing
         #expect(UsageFormatting.resetLabel(for: resetsAt, now: now, calendar: calendar) == "resets Fri 9 AM")
     }
 }
+
+/// `UsageUrgency` classifies on the ROUNDED percent — the same integer
+/// `percentLabel` prints — so the boundary cases pin the "color can never
+/// disagree with the displayed number" contract: 74.5 displays as "75%" and
+/// must be elevated; 89.5 displays as "90%" and must be critical.
+@Suite struct UsageUrgencyTests {
+    @Test func nilPercentIsNormal() {
+        #expect(UsageUrgency(percent: nil) == .normal)
+    }
+
+    @Test func thresholdsMatchTheRoundedDisplayValue() {
+        #expect(UsageUrgency(percent: 0) == .normal)
+        #expect(UsageUrgency(percent: 74.4) == .normal)     // displays "74%"
+        #expect(UsageUrgency(percent: 74.5) == .elevated)   // displays "75%"
+        #expect(UsageUrgency(percent: 89.4) == .elevated)   // displays "89%"
+        #expect(UsageUrgency(percent: 89.5) == .critical)   // displays "90%"
+        #expect(UsageUrgency(percent: 100) == .critical)
+    }
+}
