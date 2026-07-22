@@ -56,7 +56,7 @@ Click any session and it **jumps to the exact terminal pane that owns it** — a
 - **Project-aware labels** — each session is labeled by its working-directory name, so you can tell your repos apart at a glance.
 - **Stay awake (lid closed)** — an optional toggle keeps your Mac awake with the lid shut, so long agent runs don't get suspended mid-task.
 - **Zero-config hook install** — one action wires the lifecycle hooks into both CLIs; config files are *merged, never clobbered*, and install is idempotent and self-healing.
-- **Private by design** — everything is local. Events are sent over **loopback only** (`127.0.0.1:8787`), never your LAN, never the internet.
+- **Private by design** — everything is local. Events are sent over **loopback only** (`127.0.0.1:54173`), never your LAN, never the internet.
 - **Native & lightweight** — pure Swift 6, SwiftUI + AppKit, no Electron, no bundled runtime. Dock-less and unobtrusive (`LSUIElement`).
 
 ## How it works
@@ -72,7 +72,7 @@ On each lifecycle event — `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `N
 Claude Code / Codex CLI
         │  (lifecycle hook fires)
         ▼
- forward-event.sh  ──POST──▶  127.0.0.1:8787/event  ──▶  lil agents overlay + menu bar
+ forward-event.sh  ──POST──▶  127.0.0.1:54173/event  ──▶  lil agents overlay + menu bar
    (adds tty/tool/event)          (loopback only)          🔴 🟡 🟢  +  jump-to-pane
 ```
 

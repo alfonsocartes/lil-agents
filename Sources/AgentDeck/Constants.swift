@@ -5,7 +5,7 @@ import Security
 enum AgentDeck {
     /// Loopback port the embedded event listener binds to, and that installed
     /// CLI hooks forward events to. Loopback-only (127.0.0.1) — never LAN.
-    static let port: UInt16 = 8787
+    static let port: UInt16 = 54173
 
     /// A session that hasn't emitted any event in this many seconds is treated
     /// as dead and pruned (safety net for a missed SessionEnd).

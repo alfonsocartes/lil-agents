@@ -10,7 +10,7 @@ import Synchronization
 ///     "cwd":"/path", "tty":"/dev/ttys003", "notification_type":"idle_prompt" }
 /// with header `X-AgentDeck-Token: <per-install bearer token>`.
 ///
-/// Any local process can otherwise reach 127.0.0.1:8787, so every request must:
+/// Any local process can otherwise reach 127.0.0.1:54173, so every request must:
 ///   1. be `POST /event` (anything else → 404/405), and
 ///   2. carry the correct bearer token (else → 401)
 /// before its body is even decoded. Buffering is bounded throughout so a
