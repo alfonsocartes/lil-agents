@@ -10,6 +10,11 @@ final class SessionStore {
     private(set) var sessions: [Session] = []
 
     private var byID: [String: Session] = [:]
+    /// Sessions the user dismissed manually. Keep them hidden while their
+    /// current lifecycle is still emitting events; otherwise the next
+    /// heartbeat would immediately put a removed row back in both surfaces.
+    /// The timestamp lets us bound this set if a CLI never sends SessionEnd.
+    private var removedAt: [String: Date] = [:]
     private var pruneTimer: Timer?
 
     /// Last attention-state we actually fired a notification for, per
@@ -74,12 +79,29 @@ final class SessionStore {
         switch event.event {
         case "SessionEnd":
             byID[id] = nil
+            removedAt[id] = nil
             // A genuinely new session can reuse this id later — clear the
             // notify-suppression entry too so it can notify again (see
             // `lastNotified`'s doc comment above).
             lastNotified[id] = nil
             rebuild()
             return
+        case "SessionStart":
+            // A new lifecycle can reuse an old id after the user dismissed a
+            // previous session with that id.
+            removedAt[id] = nil
+        default:
+            break
+        }
+
+        if removedAt[id] != nil {
+            // Keep an actively emitting dismissed session hidden, while
+            // allowing the stale-entry cleanup below to reclaim abandoned ids.
+            removedAt[id] = now()
+            return
+        }
+
+        switch event.event {
         case "SubagentStop":
             // A subagent finished — the parent session is still working. Touch
             // only the timestamp so it isn't pruned, don't flip to idle.
@@ -142,6 +164,17 @@ final class SessionStore {
 
         rebuild()
         notifyIfNeeded(id: id, previousStatus: previousStatus)
+    }
+
+    /// Remove a session from the overlay and menu-bar list for its current
+    /// lifecycle. Hook events from that same lifecycle are ignored until
+    /// `SessionEnd`; a later `SessionStart` with the same id is treated as a
+    /// fresh session and becomes visible again.
+    func remove(_ id: String) {
+        byID[id] = nil
+        removedAt[id] = now()
+        lastNotified[id] = nil
+        rebuild()
     }
 
     /// Fires the notifier on each transition INTO an attention state
@@ -219,6 +252,12 @@ final class SessionStore {
         // can't grow unboundedly over a long-running AgentDeck process.
         let notifiedCutoff = now().addingTimeInterval(-AgentDeck.staleAfter * 24)
         lastNotified = lastNotified.filter { $0.value.at >= notifiedCutoff }
+
+        // A dismissed session with no further events is no longer useful to
+        // suppress after the same bounded horizon. Active dismissed sessions
+        // refresh their timestamp in `apply`, so they remain hidden while they
+        // continue to emit heartbeats.
+        removedAt = removedAt.filter { $0.value >= notifiedCutoff }
     }
 
     private func rebuild() {

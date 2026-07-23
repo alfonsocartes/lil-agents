@@ -161,6 +161,8 @@ struct MenuBarContentView: View {
                     SessionRow(session: session) {
                         TerminalJumpers.jump(session.jumpTarget)
                         dismiss()
+                    } onRemove: {
+                        store.remove(session.id)
                     }
                 }
             }

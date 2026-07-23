@@ -45,6 +45,32 @@ import Testing
         #expect(store.sessions.isEmpty)
     }
 
+    @Test func removeHidesSessionUntilThatSessionEnds() {
+        let store = SessionStore()
+        store.apply(makeEvent("SessionStart"))
+
+        store.remove("s1")
+        #expect(store.sessions.isEmpty)
+
+        // A still-running agent emits more hook events, but a manually removed
+        // session should stay out of both live surfaces until it ends.
+        store.apply(makeEvent("Stop"))
+        #expect(store.sessions.isEmpty)
+
+        store.apply(makeEvent("SessionEnd"))
+        #expect(store.sessions.isEmpty)
+    }
+
+    @Test func newSessionWithReusedIDCanAppearAfterRemoval() {
+        let store = SessionStore()
+        store.apply(makeEvent("SessionStart"))
+        store.remove("s1")
+
+        // SessionStart marks a new lifecycle, even if a CLI reuses the id.
+        store.apply(makeEvent("SessionStart"))
+        #expect(store.sessions.map(\.id) == ["s1"])
+    }
+
     @Test func subagentStopDoesNotFlipStatus() {
         let store = SessionStore()
         store.apply(makeEvent("SessionStart"))       // working
