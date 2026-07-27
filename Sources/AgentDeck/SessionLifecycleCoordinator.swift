@@ -173,7 +173,13 @@ final class SessionLifecycleCoordinator {
         // leaving the replacement with no liveness signal at all, and the
         // process's eventual exit with nothing to reconcile. Consistent with
         // how SessionEnd already refuses to act on `.unavailable`.
-        let process = process ?? (inspectionFailed ? inheritedProcess(forPane: pane, tool: event.agentTool) : nil)
+        let process = process ?? (inspectionFailed
+            ? inheritedProcess(
+                forPane: pane,
+                tool: event.agentTool,
+                claimedPID: event.agent_pid
+              )
+            : nil)
         let owner = process.map { ProcessOwnerKey(process: $0, tool: event.agentTool) }
         var conflicts = Set<String>()
 
@@ -207,12 +213,36 @@ final class SessionLifecycleCoordinator {
         ))
     }
 
-    /// The process currently bound to `pane` for `tool`, if any.
-    private func inheritedProcess(forPane pane: PaneIdentity?, tool: AgentTool) -> ProcessIdentity? {
-        guard let pane,
-              let incumbent = sessionIDByPane[PaneOwnerKey(pane: pane, tool: tool)]
+    /// The process bound to `pane` for `tool` — but ONLY when the event's own
+    /// claimed pid agrees that it is the same process.
+    ///
+    /// Adopting the incumbent blindly binds a session to a process that is
+    /// demonstrably not its own. Two ways that goes wrong, both real:
+    ///
+    ///  - The event says pid 206 and the pane's incumbent is 205. Inheriting
+    ///    205 means 205's exit removes the new session, while 206 is never
+    ///    watched at all.
+    ///  - The pane's incumbent was `kill -9`'d and its exit notification is
+    ///    queued but not yet delivered, so the pane index still names a dead
+    ///    process. A new CLI starting in that pane would inherit the corpse's
+    ///    identity AND its still-pending observation (`terminate(preserving:)`
+    ///    keeps it deliberately), then delete itself when that exit lands.
+    ///
+    /// Requiring the pids to match rules out both. With no claimed pid there is
+    /// nothing to corroborate, so we decline — which just leaves the lifecycle
+    /// processless, exactly what an older forwarder produced anyway.
+    private func inheritedProcess(
+        forPane pane: PaneIdentity?,
+        tool: AgentTool,
+        claimedPID: pid_t?
+    ) -> ProcessIdentity? {
+        guard let claimedPID,
+              let pane,
+              let incumbent = sessionIDByPane[PaneOwnerKey(pane: pane, tool: tool)],
+              let process = lifecycleByID[incumbent]?.process,
+              process.pid == claimedPID
         else { return nil }
-        return lifecycleByID[incumbent]?.process
+        return process
     }
 
     private func reconcileOwnership(

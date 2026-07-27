@@ -407,6 +407,53 @@ import Testing
         }
     }
 
+    /// An owner whose tty probe returns nothing at all is UNKNOWN, not
+    /// headless. Conflating the two drops the event in the coordinator —
+    /// including SessionEnd, which for Codex is the only end signal there is.
+    @Test func forwarderDoesNotCallAnOwnerHeadlessWhenTheProbeFails() throws {
+        // ttyProbeFails: this pid answers comm/ppid but has no tty row at all,
+        // which is what a failed `ps -o tty=` looks like to the script.
+        let tree: [Int32: FakeProcess] = [
+            ProcessInfo.processInfo.processIdentifier:
+                FakeProcess(comm: "sh", ppid: 9301, tty: ""),
+            9301: FakeProcess(comm: "/usr/local/bin/claude", ppid: 1, tty: ""),
+        ]
+
+        try withTempHome { _ in
+            try HookInstaller.install(port: AgentDeck.port)
+
+            let posted = try runGeneratedForwarder(
+                tool: "claude", event: "SessionEnd", tree: tree
+            )
+
+            #expect(posted["agent_pid"] as? Int == 9301)
+            #expect(posted["headless"] == nil)   // unknown, so not suppressed
+            #expect(posted["tty"] == nil)
+        }
+    }
+
+    /// Uninstall leaves a foreign event key that was already empty alone —
+    /// deleting it would break the promise that we only remove our own
+    /// entries, and an empty array is somebody else's config.
+    @Test func uninstallPreservesForeignKeysThatWereAlreadyEmpty() throws {
+        try withTempHome { home in
+            seedClaude(home, ["hooks": ["PostToolUse": [], "Notification": []]])
+
+            try HookInstaller.install(port: AgentDeck.port)
+            try HookInstaller.uninstall()
+
+            let data = try #require(try? Data(contentsOf: claudeSettingsURL(home)))
+            let root = try #require(
+                try JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let hooks = root["hooks"] as? [String: Any] ?? [:]
+
+            // PostToolUse was never ours and stays; Notification held only our
+            // entry after install, so it goes.
+            #expect(hooks["PostToolUse"] as? [[String: Any]] != nil)
+            #expect(hooks["Notification"] == nil)
+        }
+    }
+
     /// Uninstall must remove hook entries pointing at our forwarder even for
     /// events this build has never heard of — otherwise an older binary's
     /// uninstall leaves a newer one's entry behind while still deleting the

@@ -228,48 +228,62 @@ enum HookInstaller {
         agent_pid=""
         headless=""
 
-        # Pass 1 — an ancestor whose command name IS the tool. Matched exactly,
-        # not as a substring: sibling helpers like `codex-code-mode-host` run
-        # without a controlling terminal, and matching one of those would mark
-        # a real session headless and silently hide it from the overlay.
+        # ONE walk up the ancestors, preferring a command name that IS the tool
+        # and falling back to the nearest language runtime.
+        #
+        # Exact match, not substring: sibling helpers like `codex-code-mode-host`
+        # run without a controlling terminal, and matching one of those would
+        # mark a real session headless and hide it from the overlay entirely.
         # `ps -o comm=` may print a full path, hence the basename.
+        #
+        # The runtime fallback exists because a CLI installed as a
+        # `#!/usr/bin/env node` shim reports the RUNTIME as its command name,
+        # never the script's — the npm shape of Claude Code would otherwise get
+        # none of this. Hooks are spawned by the CLI itself, so the nearest
+        # runtime ancestor is that CLI.
+        #
+        # Both are resolved in a single pass on purpose. Running them as two
+        # separate walks meant an install pass 2 exists to serve could never
+        # match in pass 1, so every hook event walked the whole chain to pid 1
+        # before the second walk even started — measured at 18 `ps` forks
+        # against 5 for the old code, roughly 60-80ms added to EVERY tool call,
+        # since the CLI waits for PreToolUse hooks before running the tool.
         if [ -n "$owner_match" ]; then
           pid=$PPID
           depth=0
+          runtime_pid=""
           while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ "$depth" -lt 32 ]; do
             comm="$(ps -o comm= -p "$pid" 2>/dev/null)"
-            if [ "${comm##*/}" = "$owner_match" ]; then
+            base="${comm##*/}"
+            if [ "$base" = "$owner_match" ]; then
               agent_pid="$pid"
               break
+            fi
+            if [ -z "$runtime_pid" ]; then
+              case "$base" in
+                node|bun|deno) runtime_pid="$pid" ;;
+              esac
             fi
             pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
             depth=$((depth + 1))
           done
-
-          # Pass 2 — interpreter-backed installs. A CLI installed as a
-          # `#!/usr/bin/env node` shim reports the RUNTIME as its command name,
-          # never the script's, so pass 1 cannot see it and the npm shape of
-          # Claude Code would get none of this. Hooks are spawned by the CLI
-          # itself, so the nearest runtime ancestor is that CLI.
           if [ -z "$agent_pid" ]; then
-            pid=$PPID
-            depth=0
-            while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ "$depth" -lt 32 ]; do
-              comm="$(ps -o comm= -p "$pid" 2>/dev/null)"
-              case "${comm##*/}" in
-                node|bun|deno) agent_pid="$pid"; break ;;
-              esac
-              pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
-              depth=$((depth + 1))
-            done
+            agent_pid="$runtime_pid"
           fi
         fi
 
         if [ -n "$agent_pid" ]; then
+          # "??" means the owner genuinely has no controlling terminal. EMPTY
+          # means the probe itself told us nothing — `ps` failed, or the owner
+          # exited in the gap since the walk above. Those are not the same
+          # thing, and treating the second as headless would drop the event in
+          # SessionLifecycleCoordinator.receive — including a SessionEnd, which
+          # for Codex is the ONLY end signal there is. So claim neither a tty
+          # nor headlessness when we simply do not know.
           t="$(ps -o tty= -p "$agent_pid" 2>/dev/null | tr -d ' ')"
           if [ -n "$t" ] && [ "$t" != "??" ]; then
             tty="/dev/$t"
-          else
+          elif [ "$t" = "??" ]; then
             headless="1"
           fi
         else
@@ -663,20 +677,30 @@ enum HookInstaller {
         let scriptPath = forwarderScriptURL.path
         var pruned: [String: Any] = [:]
         for (event, value) in hooks {
-            let groups = (value as? [[String: Any]] ?? []).compactMap { group -> [String: Any]? in
-                guard var entries = group["hooks"] as? [[String: Any]] else { return group }
-                entries.removeAll { ($0["command"] as? String)?.contains(scriptPath) == true }
-                guard !entries.isEmpty else { return nil }
-                var kept = group
-                kept["hooks"] = entries
-                return kept
-            }
-            // A key we emptied is ours alone and goes; a key we never
-            // understood (not an array of groups) is left exactly as found.
-            if !groups.isEmpty {
-                pruned[event] = groups
-            } else if value as? [[String: Any]] == nil {
+            // A shape we don't understand is left exactly as found.
+            guard let groups = value as? [[String: Any]] else {
                 pruned[event] = value
+                continue
+            }
+
+            var removedAny = false
+            let kept = groups.compactMap { group -> [String: Any]? in
+                guard var entries = group["hooks"] as? [[String: Any]] else { return group }
+                let before = entries.count
+                entries.removeAll { ($0["command"] as? String)?.contains(scriptPath) == true }
+                if entries.count != before { removedAny = true }
+                guard !entries.isEmpty else { return nil }
+                var survivor = group
+                survivor["hooks"] = entries
+                return survivor
+            }
+
+            // Drop the key only when it is empty BECAUSE we emptied it. An
+            // already-empty foreign key is somebody else's config, and
+            // deleting it would break the promise that uninstall only ever
+            // removes our own entries.
+            if !kept.isEmpty || !removedAny {
+                pruned[event] = kept
             }
         }
         return pruned

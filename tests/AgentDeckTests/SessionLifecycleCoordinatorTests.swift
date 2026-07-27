@@ -457,6 +457,52 @@ import Testing
         #expect(system.store.sessions.isEmpty)
     }
 
+    /// Inheriting the pane's process is only sound when the event's own pid
+    /// agrees. Adopting an incumbent the event contradicts binds the session to
+    /// a process that is not its own: the incumbent's exit then deletes it,
+    /// while the process it actually named is never watched.
+    @Test func uninspectableSessionStartDoesNotInheritADifferentPID() {
+        let system = makeSystem()
+        let processA = processIdentity(pid: 205)
+
+        system.lifecycle.receive(
+            makeEvent("SessionStart", id: "A", tty: "ttys050", agentPID: 205),
+            processLookup: .running(processA)
+        )
+        system.lifecycle.receive(
+            makeEvent("SessionStart", id: "B", tty: "ttys050", agentPID: 206),
+            processLookup: .unavailable(error: EPERM)
+        )
+        #expect(system.store.sessions.map(\.id) == ["B"])
+
+        // A's exit must not take B with it — B never claimed to be pid 205.
+        system.observer.emitExit(for: processA)
+        #expect(system.store.sessions.map(\.id) == ["B"])
+    }
+
+    /// The same guard covers a pane whose incumbent is already dead: its exit
+    /// notification can still be in flight, so the pane index names a corpse.
+    /// A new CLI starting there must not adopt that identity — or the pending
+    /// exit deletes the session that just started.
+    @Test func uninspectableSessionStartDoesNotInheritADeadIncumbent() {
+        let system = makeSystem()
+        let dead = processIdentity(pid: 4242)
+
+        system.lifecycle.receive(
+            makeEvent("SessionStart", id: "old", tty: "ttys003", agentPID: 4242),
+            processLookup: .running(dead)
+        )
+        // New CLI, same pane, different pid, and inspection happens to fail.
+        system.lifecycle.receive(
+            makeEvent("SessionStart", id: "new", tty: "ttys003", agentPID: 4300),
+            processLookup: .unavailable(error: EPERM)
+        )
+
+        // The queued exit for the old owner finally lands.
+        system.observer.emitExit(for: dead)
+        #expect(system.store.sessions.map(\.id) == ["new"])
+    }
+
     @Test func tmuxHostTTYDoesNotCollapseIndependentPanes() {
         let system = makeSystem()
 
