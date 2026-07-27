@@ -29,13 +29,88 @@ func makeEvent(
     id: String = "s1",
     tool: String = "claude",
     notification: String? = nil,
-    cwd: String? = nil
+    cwd: String? = nil,
+    tty: String? = nil,
+    agentPID: Int32? = nil,
+    headless: Bool? = nil,
+    terminal: String? = nil,
+    weztermPane: String? = nil,
+    weztermSocket: String? = nil,
+    tmuxPane: String? = nil,
+    tmuxSocket: String? = nil,
+    hostTTY: String? = nil
 ) -> HookEvent {
     var dict: [String: Any] = ["tool": tool, "event": event, "session_id": id]
     if let notification { dict["notification_type"] = notification }
     if let cwd { dict["cwd"] = cwd }
+    if let tty { dict["tty"] = tty }
+    if let agentPID { dict["agent_pid"] = agentPID }
+    if let headless { dict["headless"] = headless }
+    if let terminal { dict["terminal"] = terminal }
+    if let weztermPane { dict["wezterm_pane"] = weztermPane }
+    if let weztermSocket { dict["wezterm_socket"] = weztermSocket }
+    if let tmuxPane { dict["tmux_pane"] = tmuxPane }
+    if let tmuxSocket { dict["tmux_socket"] = tmuxSocket }
+    if let hostTTY { dict["host_tty"] = hostTTY }
     let data = try! JSONSerialization.data(withJSONObject: dict)
     return try! JSONDecoder().decode(HookEvent.self, from: data)
+}
+
+// MARK: - Process observation fakes
+
+@MainActor
+final class FakeProcessExitObserver: ProcessExitObserving {
+    @MainActor
+    private final class Token: ProcessObservation {
+        private let onCancel: () -> Void
+        private var isCancelled = false
+
+        init(onCancel: @escaping () -> Void) {
+            self.onCancel = onCancel
+        }
+
+        func cancel() {
+            guard !isCancelled else { return }
+            isCancelled = true
+            onCancel()
+        }
+    }
+
+    private(set) var observeCount: [ProcessIdentity: Int] = [:]
+    private(set) var cancelCount: [ProcessIdentity: Int] = [:]
+    private var handlers: [ProcessIdentity: [@MainActor @Sendable (ProcessIdentity) -> Void]] = [:]
+
+    func observe(
+        _ identity: ProcessIdentity,
+        onExit: @escaping @MainActor @Sendable (ProcessIdentity) -> Void
+    ) -> any ProcessObservation {
+        observeCount[identity, default: 0] += 1
+        handlers[identity, default: []].append(onExit)
+        return Token { [weak self] in
+            self?.cancelCount[identity, default: 0] += 1
+        }
+    }
+
+    /// Intentionally retains handlers after cancellation. Tests can therefore
+    /// simulate a dispatch callback that was already queued when replacement
+    /// cancelled its observation.
+    func emitExit(for identity: ProcessIdentity) {
+        for handler in handlers[identity] ?? [] {
+            handler(identity)
+        }
+    }
+}
+
+func processIdentity(
+    pid: Int32,
+    startSeconds: UInt64 = 1,
+    startMicroseconds: UInt64 = 0
+) -> ProcessIdentity {
+    ProcessIdentity(
+        pid: pid,
+        startSeconds: startSeconds,
+        startMicroseconds: startMicroseconds
+    )
 }
 
 // MARK: - Temp filesystem helpers (never writes outside the temp dir)

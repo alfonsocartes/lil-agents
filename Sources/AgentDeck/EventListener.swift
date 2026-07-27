@@ -32,7 +32,8 @@ final class EventListener: Sendable {
     // isolated, hence Sendable; the two mutable pieces of state live inside
     // `Mutex`es). NWListener/NWConnection handlers are `@Sendable` closures
     // running on `queue`, so `self` must legitimately cross isolation here.
-    private let store: SessionStore
+    private let lifecycle: SessionLifecycleCoordinator
+    private let processResolver: any ProcessIdentityResolving
     private let token: String
     /// Retains the live NWListener for the app's lifetime; written once in
     /// `start()`. Mutex-wrapped purely so the retention slot is concurrency-
@@ -44,8 +45,13 @@ final class EventListener: Sendable {
     /// the type system rather than by convention.
     private let activeConnections = Mutex(0)
 
-    init(store: SessionStore, token: String) {
-        self.store = store
+    init(
+        lifecycle: SessionLifecycleCoordinator,
+        processResolver: any ProcessIdentityResolving,
+        token: String
+    ) {
+        self.lifecycle = lifecycle
+        self.processResolver = processResolver
         self.token = token
     }
 
@@ -195,7 +201,16 @@ final class EventListener: Sendable {
             NSLog("AgentDeck: undecodable event body")
             return
         }
-        Task { @MainActor in self.store.apply(event) }
+
+        // Resolve while still on the listener queue, before the HTTP response
+        // lets a rapidly closing CLI disappear. The start-time fingerprint is
+        // then carried to the main actor with the event.
+        let processLookup = event.agent_pid.flatMap { pid in
+            pid > 1 ? processResolver.identity(for: pid) : nil
+        }
+        Task { @MainActor in
+            self.lifecycle.receive(event, processLookup: processLookup)
+        }
     }
 
     private func respond(_ conn: NWConnection, status: String) {

@@ -15,7 +15,6 @@ final class SessionStore {
     /// heartbeat would immediately put a removed row back in both surfaces.
     /// The timestamp lets us bound this set if a CLI never sends SessionEnd.
     private var removedAt: [String: Date] = [:]
-    private var pruneTimer: Timer?
 
     /// Last attention-state we actually fired a notification for, per
     /// session id. This does NOT mean "notify once per session" — it
@@ -65,31 +64,22 @@ final class SessionStore {
         return .none
     }
 
-    init() {
-        // Periodically drop sessions that went silent (missed SessionEnd).
-        pruneTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.pruneStale() }
-        }
-    }
-
     /// Apply a single hook event. Called on the main actor from the listener.
     func apply(_ event: HookEvent) {
-        let id = event.session_id ?? "\(event.tool):\(event.tty ?? "?")"
+        let id = event.resolvedSessionID
 
         switch event.event {
         case "SessionEnd":
-            byID[id] = nil
-            removedAt[id] = nil
-            // A genuinely new session can reuse this id later — clear the
-            // notify-suppression entry too so it can notify again (see
-            // `lastNotified`'s doc comment above).
-            lastNotified[id] = nil
-            rebuild()
+            endLifecycle(id)
             return
         case "SessionStart":
-            // A new lifecycle can reuse an old id after the user dismissed a
-            // previous session with that id.
+            // SessionStart always begins fresh presentation state. Besides
+            // allowing a dismissed id to reappear, this prevents terminal
+            // metadata from a previous lifecycle leaking into a resumed or
+            // reset session that happens to reuse the same id.
+            byID[id] = nil
             removedAt[id] = nil
+            lastNotified[id] = nil
         default:
             break
         }
@@ -177,6 +167,16 @@ final class SessionStore {
         rebuild()
     }
 
+    /// Idempotently end a lifecycle, whether the signal came from a CLI
+    /// SessionEnd hook or from the owning process exiting. This also clears a
+    /// manual-dismissal tombstone so a future lifecycle may reuse the id.
+    func endLifecycle(_ id: String) {
+        byID[id] = nil
+        removedAt[id] = nil
+        lastNotified[id] = nil
+        rebuild()
+    }
+
     /// Fires the notifier on each transition INTO an attention state
     /// (working → idle/waitingApproval, or a brand-new session that arrives
     /// already in one of those states). Never fires for `.working`, and
@@ -238,10 +238,16 @@ final class SessionStore {
 
     // `internal` (not `private`) so tests can drive prune behavior directly
     // with an injected clock, rather than waiting on the 30s interval timer.
-    func pruneStale() {
+    //
+    // `protecting` carries the ids the coordinator can prove are still alive
+    // (their owning process is being watched for exit). Silence is only a
+    // liveness proxy for the rows we have nothing better for — applied to a
+    // verified-live session it deletes an agent the user left idle and can
+    // still jump back to. Defaulted so direct callers keep the old behavior.
+    func pruneStale(protecting protectedIDs: Set<String> = []) {
         let cutoff = now().addingTimeInterval(-AgentDeck.staleAfter)
         let before = byID.count
-        byID = byID.filter { $0.value.lastUpdate >= cutoff }
+        byID = byID.filter { $0.value.lastUpdate >= cutoff || protectedIDs.contains($0.key) }
         if byID.count != before { rebuild() }
 
         // Bound `lastNotified`'s growth for sessions that never get an
