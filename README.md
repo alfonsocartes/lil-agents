@@ -49,6 +49,7 @@ Click any session and it **jumps to the exact terminal pane that owns it** — a
 ## Features
 
 - **Real-time agent monitoring** — tracks Claude Code and Codex CLI sessions as they start, work, prompt, and finish.
+- **Automatic session cleanup** — removes a session when its CLI process exits (including terminal tab, pane, or window closure) and replaces the old row when `/clear`, `/new`, or another in-process reset starts a new lifecycle. A detached tmux session stays visible while its agent is still alive.
 - **Floating overlay** — a compact, translucent, always-on-top list of live sessions; hover a row to reveal which agent owns it. Toggle it anywhere with a global hotkey (**⌥⌘J**).
 - **Menu bar status icon** — the menu-bar glyph changes color to reflect the most attention-worthy session (red → yellow → green), so you know the state without even opening the overlay.
 - **One-click jump to terminal** — click a session (in the overlay or the menu) to focus the exact pane that owns it. Precise focus for **iTerm2, Terminal.app, WezTerm, and tmux** (matched by controlling TTY / pane id); **Ghostty** gets precise split focus too via its AppleScript API (working-directory match on 1.3.0+, exact TTY match on 1.4.0+/tip), falling back to bringing the app forward on older builds.
@@ -66,14 +67,16 @@ Click any session and it **jumps to the exact terminal pane that owns it** — a
 - **Claude Code** → `~/.claude/settings.json`
 - **Codex CLI** → `~/.codex/hooks.json`
 
-On each lifecycle event — `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `SubagentStop`, and `SessionEnd` for Claude Code; `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, and `Stop` for Codex CLI — a tiny generated forwarder script reads the hook's JSON, tags it with the terminal's TTY, and `POST`s it to the app's local listener. The app maps those events to a coarse status (`working` / `idle` / `waitingApproval`) and updates the overlay and menu-bar icon instantly.
+On each lifecycle event — `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `SubagentStop`, and `SessionEnd` for Claude Code; `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `Stop`, and `SessionEnd` for Codex CLI — a tiny generated forwarder script reads the hook's JSON, tags it with the terminal's TTY and owning CLI PID, and `POST`s it to the app's local listener. The app maps those events to a coarse status (`working` / `idle` / `waitingApproval`) and updates the overlay and menu-bar icon instantly. It fingerprints and watches the owning process so abrupt terminal closure still ends the right session without being confused by macOS reusing a PID.
+
+The forwarder attributes each event to the CLI process that actually owns it — the nearest ancestor whose command name is the tool, or, for interpreter-backed installs where that name is the runtime rather than the script, the nearest `node`/`bun`/`deno` — and reads the TTY from that process alone. Agents increasingly spawn other agents, and a nested headless run (`codex exec`, `claude -p`, CI) has no pane of its own; it is reported as headless and stays out of the overlay rather than borrowing the parent agent's pane and PID. Turn on **Settings → Sessions → Show background agents** if you want them listed anyway — useful when an agent you *are* waiting on runs outside a terminal, such as an editor-hosted session. If the owner can't be identified at all, the event carries a TTY for the jump feature but claims no PID — an unsubstantiated ownership claim would hand one session's row to another.
 
 ```
 Claude Code / Codex CLI
         │  (lifecycle hook fires)
         ▼
  forward-event.sh  ──POST──▶  127.0.0.1:54173/event  ──▶  lil agents overlay + menu bar
-   (adds tty/tool/event)          (loopback only)          🔴 🟡 🟢  +  jump-to-pane
+ (adds tty/PID/tool/event)        (loopback only)          🔴 🟡 🟢  +  jump-to-pane
 ```
 
 Existing hooks from other tools and plugins are preserved — the installer only ever adds or removes its own entries.

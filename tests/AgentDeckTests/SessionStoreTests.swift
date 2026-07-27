@@ -71,6 +71,25 @@ import Testing
         #expect(store.sessions.map(\.id) == ["s1"])
     }
 
+    @Test func sessionStartDoesNotCarryTerminalMetadataAcrossLifecycles() {
+        let store = SessionStore()
+        store.apply(makeEvent(
+            "SessionStart",
+            tty: "/dev/ttys001",
+            terminal: "tmux",
+            tmuxPane: "%1",
+            tmuxSocket: "/tmp/tmux.sock"
+        ))
+
+        store.apply(makeEvent("SessionStart", tty: "/dev/ttys002"))
+
+        let session = store.sessions[0]
+        #expect(session.tty == "/dev/ttys002")
+        #expect(session.terminal == .unknown)
+        #expect(session.tmuxPane == nil)
+        #expect(session.tmuxSocket == nil)
+    }
+
     @Test func subagentStopDoesNotFlipStatus() {
         let store = SessionStore()
         store.apply(makeEvent("SessionStart"))       // working
@@ -165,5 +184,19 @@ import Testing
         store.apply(makeEvent("PreToolUse"))
         store.apply(makeEvent("Stop"))
         #expect(spy.count == 2)
+    }
+
+    @Test func protectedSessionsAreExemptFromTheSilenceHorizon() {
+        let store = SessionStore()
+        var clock = Date(timeIntervalSince1970: 1_000_000)
+        store.now = { clock }
+
+        store.apply(makeEvent("SessionStart", id: "live"))
+        store.apply(makeEvent("SessionStart", id: "unverifiable"))
+
+        clock = clock.addingTimeInterval(AgentDeck.staleAfter + 1)
+        store.pruneStale(protecting: ["live"])
+
+        #expect(store.sessions.map(\.id) == ["live"])
     }
 }

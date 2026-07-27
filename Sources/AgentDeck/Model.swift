@@ -51,15 +51,25 @@ enum TerminalKind: String, Codable {
 }
 
 /// The wire format posted by installed CLI hooks to `POST /event`.
-/// The forwarder script merges the hook's stdin JSON with the captured tty
-/// and (best-effort) terminal-detection fields.
-struct HookEvent: Codable {
+/// The forwarder script merges the hook's stdin JSON with the captured tty,
+/// owning CLI PID, and (best-effort) terminal-detection fields.
+struct HookEvent: Codable, Sendable {
     var tool: String
     var event: String
     var session_id: String?
     var cwd: String?
     var tty: String?
     var notification_type: String?
+    /// PID of the long-lived Claude/Codex process that owns this lifecycle.
+    /// Optional so events from an older installed forwarder remain decodable.
+    var agent_pid: Int32?
+    /// True when the owning CLI has no controlling terminal of its own — a
+    /// scripted or nested run (`codex exec`, `claude -p`, CI) rather than a
+    /// session someone is sitting in front of. Set by the forwarder, which
+    /// reads the tty of the owning process ONLY, never an ancestor's. Optional
+    /// so events from an older installed forwarder remain decodable (and
+    /// decode as "not headless", i.e. the pre-existing behavior).
+    var headless: Bool?
 
     // Terminal-jump fields — all optional and additive, so events from an
     // older forwarder that doesn't send them still decode cleanly. See
@@ -76,6 +86,7 @@ struct HookEvent: Codable {
 
     var agentTool: AgentTool { AgentTool(rawValue: tool) ?? .unknown }
     var terminalKind: TerminalKind { TerminalKind(rawValue: terminal ?? "") ?? .unknown }
+    var resolvedSessionID: String { session_id ?? "\(tool):\(tty ?? "?")" }
 }
 
 /// A live session tracked in the overlay.

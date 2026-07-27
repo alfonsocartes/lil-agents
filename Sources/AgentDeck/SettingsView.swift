@@ -19,6 +19,10 @@ struct SettingsView: View {
 
             Divider()
 
+            sessionsSection
+
+            Divider()
+
             usageSection
 
             Divider()
@@ -46,6 +50,24 @@ struct SettingsView: View {
             .foregroundStyle(settings.notificationsEnabled ? .primary : .secondary)
 
             Text("Alerts fire once, right when a session starts needing you — not on every update while it waits.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Off by default: an agent with no terminal of its own is usually a
+    /// scripted or nested run nobody is waiting on, and they arrive faster
+    /// than real sessions. The toggle exists because that is not universally
+    /// true — see `AppSettings.showBackgroundSessions`.
+    private var sessionsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Sessions")
+                .font(.headline)
+
+            Toggle("Show background agents", isOn: $settings.showBackgroundSessions)
+
+            Text("Agents with no terminal of their own — scripted runs like `codex exec` and `claude -p`, CI jobs, and editor-hosted sessions. They're hidden by default because there's no pane to jump to, and one agent spawning others can bury the sessions you're actually watching.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

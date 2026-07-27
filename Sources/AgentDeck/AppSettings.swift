@@ -16,6 +16,7 @@ final class AppSettings {
         static let playSound = "notifications.playSound"
         static let claudeUsageEnabled = "usage.claudeEnabled"
         static let codexUsageEnabled = "usage.codexEnabled"
+        static let showBackgroundSessions = "sessions.showBackground"
     }
 
     /// Master switch. When off, no notification of any kind fires.
@@ -52,6 +53,28 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(codexUsageEnabled, forKey: Keys.codexUsageEnabled) }
     }
 
+    /// Show agents that have no terminal of their own — scripted or nested
+    /// runs like `codex exec`, `claude -p`, and CI. Default **false**: these
+    /// have no pane to jump to and nobody waiting on them, and one agent
+    /// spawning others produces them faster than real sessions, so left
+    /// visible they bury the sessions you actually care about.
+    ///
+    /// Not everyone's background runs are noise, though — an agent hosted
+    /// somewhere without a controlling terminal (a Codex IDE session, say) is
+    /// a real session that this rule would otherwise hide with no way to get
+    /// it back. Hence the toggle rather than a hardcoded policy.
+    var showBackgroundSessions: Bool {
+        didSet {
+            UserDefaults.standard.set(showBackgroundSessions, forKey: Keys.showBackgroundSessions)
+            onShowBackgroundSessionsChange?(showBackgroundSessions)
+        }
+    }
+
+    /// Fired when `showBackgroundSessions` flips, so the lifecycle coordinator
+    /// can retire rows the user just chose to stop seeing instead of leaving
+    /// them until the next sweep. Wired in AppDelegate; nil in tests.
+    var onShowBackgroundSessionsChange: ((Bool) -> Void)?
+
     init() {
         let defaults = UserDefaults.standard
         notificationsEnabled = defaults.object(forKey: Keys.notificationsEnabled) as? Bool ?? true
@@ -60,5 +83,6 @@ final class AppSettings {
         playSound = defaults.object(forKey: Keys.playSound) as? Bool ?? true
         claudeUsageEnabled = defaults.object(forKey: Keys.claudeUsageEnabled) as? Bool ?? false
         codexUsageEnabled = defaults.object(forKey: Keys.codexUsageEnabled) as? Bool ?? false
+        showBackgroundSessions = defaults.object(forKey: Keys.showBackgroundSessions) as? Bool ?? false
     }
 }

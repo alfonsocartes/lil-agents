@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Not exposed via AppServices — no view needs them.
     private let hotKeys = HotKeyCenter()
     private var listener: EventListener?
+    private var lifecycle: SessionLifecycleCoordinator?
     private var notifier: Notifier?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -42,8 +43,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.notifier = notifier
         store.notifier = notifier
 
+        // Reconcile hooks with their owning process before starting the
+        // listener. The resolver is shared so EventListener can fingerprint a
+        // PID before replying, while the observer can re-check that same
+        // fingerprint after its dispatch source is activated.
+        let processResolver = DarwinProcessIdentityResolver()
+        let processObserver = DispatchProcessExitObserver(resolver: processResolver)
+        let lifecycle = SessionLifecycleCoordinator(
+            store: store,
+            processObserver: processObserver
+        )
+        self.lifecycle = lifecycle
+
+        // Background-agent visibility is a user setting (Settings → Sessions).
+        // Read through a closure so the coordinator stays independent of the
+        // settings layer, and retire the rows immediately when it is switched
+        // off rather than leaving them until each one ends.
+        let settings = services.settings
+        lifecycle.showsBackgroundSessions = { [weak settings] in
+            settings?.showBackgroundSessions ?? false
+        }
+        settings.onShowBackgroundSessionsChange = { [weak lifecycle] isShown in
+            guard !isShown else { return }
+            lifecycle?.dropBackgroundSessions()
+        }
+
         // Start the event listener.
-        let listener = EventListener(store: store, token: token)
+        let listener = EventListener(
+            lifecycle: lifecycle,
+            processResolver: processResolver,
+            token: token
+        )
         listener.start()
         self.listener = listener
 

@@ -6,10 +6,11 @@ import Synchronization
 ///
 /// Both CLIs are configured to invoke a small generated forwarder script on each
 /// lifecycle event. The script reads the hook's stdin JSON, merges in `tool`,
-/// `event`, and the pane's controlling `tty`, and POSTs the result — bearing the
-/// per-install `X-AgentDeck-Token` header (see `AgentDeck.loadOrCreateToken()`)
-/// — to our local listener (`127.0.0.1:<port>/event`) matching the `HookEvent`
-/// wire contract in Model.swift.
+/// `event`, the pane's controlling `tty`, and the owning CLI PID, then POSTs
+/// the result — bearing the per-install
+/// `X-AgentDeck-Token` header (see `AgentDeck.loadOrCreateToken()`) — to our
+/// local listener (`127.0.0.1:<port>/event`) matching the `HookEvent` wire
+/// contract in Model.swift.
 ///
 /// Config files are always merged (never clobbered): existing hook entries from
 /// other tools/plugins are preserved, and our own entries are only added once
@@ -118,8 +119,16 @@ enum HookInstaller {
     /// permission_mode), so no `notify`-style argv fallback is needed. `hooks.json` is a fully
     /// documented, first-class config surface (alongside inline `config.toml [hooks]` tables), so we
     /// write there rather than touching TOML.
+    ///
+    /// `SessionEnd` matters more than it looks: without it a Codex session has
+    /// NO end signal at all, so every one-shot `codex exec` left a row that
+    /// only the 1-hour stale sweep could ever retire. It is a real event in
+    /// Codex's hook enum (verified against the shipped binary's hook-event
+    /// wire names, alongside SessionStart/UserPromptSubmit/SubagentStart/
+    /// SubagentStop/Stop) — it had simply never been wired up here.
     private static let codexEvents = [
         "SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "Stop",
+        "SessionEnd",
     ]
 
     private static func command(for tool: String, event: String) -> String {
@@ -190,19 +199,119 @@ enum HookInstaller {
         # this point re-reads stdin.
         stdin_json="$(cat)"
 
-        # Find the controlling tty of the CLI pane. The hook subprocess itself has
-        # NO controlling terminal, so walk up the parent chain until we find one —
-        # the CLI process (node/codex) running in the pane holds the pane's tty.
+        # Identify the CLI process that owns this session, then take THAT
+        # process's controlling terminal as the session's pane. Start at our
+        # parent rather than $$ so the short-lived forwarder can never be
+        # mistaken for the process we should monitor.
+        #
+        # This used to walk up to the first ancestor that merely HAD a tty,
+        # which is wrong the moment one agent spawns another. A headless
+        # `codex exec` launched from a Claude Code session has no controlling
+        # terminal of its own, so the walk sailed straight past it and
+        # reported the PARENT Claude process's pid and tty. Every such run
+        # then looked like it lived in the parent's pane and was owned by the
+        # parent's (still very much alive) process — so the overlay grew a row
+        # per run that nothing could ever retire, and process-exit tracking
+        # watched a process that wasn't going to exit.
+        #
+        # So: find the nearest ancestor whose command name matches this tool,
+        # and read the tty from that process alone. An owner with no
+        # controlling terminal is reported as headless rather than borrowing
+        # an ancestor's pane.
+        case "$TOOL" in
+          claude) owner_match="claude" ;;
+          codex)  owner_match="codex" ;;
+          *)      owner_match="" ;;
+        esac
+
         tty=""
-        pid=$$
-        while [ -n "$pid" ] && [ "$pid" -gt 1 ]; do
-          t=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
+        agent_pid=""
+        headless=""
+
+        # ONE walk up the ancestors, preferring a command name that IS the tool
+        # and falling back to the nearest language runtime.
+        #
+        # Exact match, not substring: sibling helpers like `codex-code-mode-host`
+        # run without a controlling terminal, and matching one of those would
+        # mark a real session headless and hide it from the overlay entirely.
+        # `ps -o comm=` may print a full path, hence the basename.
+        #
+        # The runtime fallback exists because a CLI installed as a
+        # `#!/usr/bin/env node` shim reports the RUNTIME as its command name,
+        # never the script's — the npm shape of Claude Code would otherwise get
+        # none of this. Hooks are spawned by the CLI itself, so the nearest
+        # runtime ancestor is that CLI.
+        #
+        # The NEAREST ancestor matching either rule wins, and the walk stops
+        # there. Preferring an exact name match at ANY depth over a closer
+        # runtime was both slower and wrong:
+        #
+        #  - Slower, because an interpreter-backed install can never produce an
+        #    exact match, so every hook event walked the entire ancestry to pid
+        #    1 — measured at 17 `ps` forks against 8 for a native install, on a
+        #    path the CLI blocks on before each tool call.
+        #  - Wrong, because a `claude` or `codex` ancestor ABOVE the real owner
+        #    would win. A native `claude` whose Bash tool launches an
+        #    npm-installed `claude` would attribute the nested run's pid and
+        #    tty to the outer session — the exact mis-attribution this whole
+        #    routine exists to prevent.
+        #
+        # Nearest-wins is also just the right model: hooks are spawned by the
+        # CLI that owns the session, so the first plausible CLI above us IS it.
+        if [ -n "$owner_match" ]; then
+          pid=$PPID
+          depth=0
+          while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ "$depth" -lt 32 ]; do
+            comm="$(ps -o comm= -p "$pid" 2>/dev/null)"
+            base="${comm##*/}"
+            if [ "$base" = "$owner_match" ]; then
+              agent_pid="$pid"
+              break
+            fi
+            case "$base" in
+              node|bun|deno) agent_pid="$pid"; break ;;
+            esac
+            pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+            depth=$((depth + 1))
+          done
+        fi
+
+        if [ -n "$agent_pid" ]; then
+          # "??" means the owner genuinely has no controlling terminal. EMPTY
+          # means the probe itself told us nothing — `ps` failed, or the owner
+          # exited in the gap since the walk above. Those are not the same
+          # thing, and treating the second as headless would drop the event in
+          # SessionLifecycleCoordinator.receive — including a SessionEnd, which
+          # for Codex is the ONLY end signal there is. So claim neither a tty
+          # nor headlessness when we simply do not know.
+          t="$(ps -o tty= -p "$agent_pid" 2>/dev/null | tr -d ' ')"
           if [ -n "$t" ] && [ "$t" != "??" ]; then
             tty="/dev/$t"
-            break
+          elif [ "$t" = "??" ]; then
+            headless="1"
           fi
-          pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-        done
+        else
+          # Owner unidentified. Report a tty for the jump feature if some
+          # ancestor has one, but deliberately DO NOT set agent_pid: claiming
+          # ownership we cannot substantiate is worse than claiming none. The
+          # first ancestor with a terminal is frequently the WRONG process —
+          # for a nested agent run it is the parent agent — and asserting that
+          # pid would hand the parent's row to this session, evict it, and
+          # (because a process-backed row is exempt from stale pruning) leave
+          # the replacement in place for as long as the parent lives. Without a
+          # pid this degrades to exactly the pre-ownership behavior.
+          pid=$PPID
+          depth=0
+          while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ "$depth" -lt 32 ]; do
+            t=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
+            if [ -n "$t" ] && [ "$t" != "??" ]; then
+              tty="/dev/$t"
+              break
+            fi
+            pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+            depth=$((depth + 1))
+          done
+        fi
 
         # Detect which terminal (or multiplexer) hosts this pane, for the
         # "jump to pane" feature (see TerminalJumpers.swift). Best-effort —
@@ -318,6 +427,8 @@ enum HookInstaller {
         fi
 
         json="$(printf '%s' "$stdin_json" | \\
+          AGENTDECK_AGENT_PID="$agent_pid" \\
+          AGENTDECK_HEADLESS="$headless" \\
           AGENTDECK_TERMINAL="$terminal" \\
           AGENTDECK_WEZTERM_PANE="$wezterm_pane" \\
           AGENTDECK_WEZTERM_SOCKET="$wezterm_socket" \\
@@ -411,6 +522,18 @@ enum HookInstaller {
                 if value:
                     data[key] = value
 
+            # Never trust a PID or a headless claim supplied by the CLI hook
+            # payload itself. Only the locally generated forwarder may assert
+            # process ownership or how the session was launched.
+            data.pop("agent_pid", None)
+            agent_pid = os.environ.get("AGENTDECK_AGENT_PID", "")
+            if agent_pid.isdecimal() and int(agent_pid) > 1:
+                data["agent_pid"] = int(agent_pid)
+
+            data.pop("headless", None)
+            if os.environ.get("AGENTDECK_HEADLESS", ""):
+                data["headless"] = True
+
             print(json.dumps(data))
 
 
@@ -452,13 +575,11 @@ enum HookInstaller {
     private static func uninstallClaudeHooks() throws {
         guard let data = try? Data(contentsOf: claudeSettingsURL),
               var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              var hooks = root["hooks"] as? [String: Any]
+              let hooks = root["hooks"] as? [String: Any]
         else { return }
 
-        for event in claudeEvents {
-            hooks[event] = prunedGroups(hooks[event], removing: command(for: "claude", event: event))
-        }
-        root["hooks"] = hooks.isEmpty ? nil : hooks
+        let remaining = prunedHooks(hooks)
+        root["hooks"] = remaining.isEmpty ? nil : remaining
 
         let out = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
         try out.write(to: claudeSettingsURL, options: .atomic)
@@ -491,13 +612,11 @@ enum HookInstaller {
     private static func uninstallCodexHooks() throws {
         guard let data = try? Data(contentsOf: codexHooksURL),
               var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              var hooks = root["hooks"] as? [String: Any]
+              let hooks = root["hooks"] as? [String: Any]
         else { return }
 
-        for event in codexEvents {
-            hooks[event] = prunedGroups(hooks[event], removing: command(for: "codex", event: event))
-        }
-        root["hooks"] = hooks.isEmpty ? nil : hooks
+        let remaining = prunedHooks(hooks)
+        root["hooks"] = remaining.isEmpty ? nil : remaining
 
         let out = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
         try out.write(to: codexHooksURL, options: .atomic)
@@ -545,18 +664,49 @@ enum HookInstaller {
         return groups
     }
 
-    /// Returns `existing` with any hook entry matching `command` removed, dropping
-    /// matcher-groups that become empty as a result.
+    /// Returns `hooks` with every entry referencing our forwarder script
+    /// removed, from EVERY event key present — not just the ones in
+    /// `claudeEvents`/`codexEvents` — dropping matcher-groups and then event
+    /// keys that become empty. Foreign hooks are left untouched.
+    ///
+    /// Matching by script path rather than by exact command string is what
+    /// makes uninstall survive the event lists changing. An older build's
+    /// uninstall iterated its own (shorter) list, so a hook a newer build had
+    /// added was invisible to it — while `uninstall()` still deleted the
+    /// forwarder that entry pointed at, leaving the config permanently
+    /// invoking a script that no longer exists. This mirrors the self-healing
+    /// `upsertGroups` already does on the install side.
     // `internal` (not `private`) so unit tests can exercise the pure prune logic directly.
-    internal static func prunedGroups(_ existing: Any?, removing command: String) -> [[String: Any]] {
-        let groups = existing as? [[String: Any]] ?? []
-        return groups.compactMap { group -> [String: Any]? in
-            guard var entries = group["hooks"] as? [[String: Any]] else { return group }
-            entries.removeAll { ($0["command"] as? String) == command }
-            guard !entries.isEmpty else { return nil }
-            var pruned = group
-            pruned["hooks"] = entries
-            return pruned
+    internal static func prunedHooks(_ hooks: [String: Any]) -> [String: Any] {
+        let scriptPath = forwarderScriptURL.path
+        var pruned: [String: Any] = [:]
+        for (event, value) in hooks {
+            // A shape we don't understand is left exactly as found.
+            guard let groups = value as? [[String: Any]] else {
+                pruned[event] = value
+                continue
+            }
+
+            var removedAny = false
+            let kept = groups.compactMap { group -> [String: Any]? in
+                guard var entries = group["hooks"] as? [[String: Any]] else { return group }
+                let before = entries.count
+                entries.removeAll { ($0["command"] as? String)?.contains(scriptPath) == true }
+                if entries.count != before { removedAny = true }
+                guard !entries.isEmpty else { return nil }
+                var survivor = group
+                survivor["hooks"] = entries
+                return survivor
+            }
+
+            // Drop the key only when it is empty BECAUSE we emptied it. An
+            // already-empty foreign key is somebody else's config, and
+            // deleting it would break the promise that uninstall only ever
+            // removes our own entries.
+            if !kept.isEmpty || !removedAny {
+                pruned[event] = kept
+            }
         }
+        return pruned
     }
 }
