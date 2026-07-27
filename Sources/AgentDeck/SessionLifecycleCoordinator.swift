@@ -17,6 +17,10 @@ final class SessionLifecycleCoordinator {
         var process: ProcessIdentity?
         var pane: PaneIdentity?
         var lastSeen: Date
+        /// True for an agent with no controlling terminal of its own. Tracked
+        /// so the rows can be retired the moment the user turns them off,
+        /// rather than lingering until they happen to end.
+        var isBackground: Bool = false
     }
 
     private struct PaneOwnerKey: Hashable {
@@ -50,8 +54,23 @@ final class SessionLifecycleCoordinator {
     /// wall time; tests advance both clocks deterministically.
     var now: () -> Date = { Date() }
 
+    /// Whether agents with no terminal of their own are shown. A closure, not
+    /// an `AppSettings` reference, so the coordinator keeps no dependency on
+    /// the settings layer and tests can flip it without touching UserDefaults.
+    /// Defaults to the shipped policy: hidden.
+    var showsBackgroundSessions: () -> Bool = { false }
+
     var trackedLifecycleCount: Int { lifecycleByID.count }
     var trackedPaneCount: Int { sessionIDByPane.count }
+
+    /// Retires every background row at once — what the Settings toggle calls
+    /// when it is switched off, so those rows go immediately rather than
+    /// hanging around until each one happens to end.
+    func dropBackgroundSessions() {
+        for id in lifecycleByID.values.filter(\.isBackground).map(\.id) {
+            terminate(sessionID: id)
+        }
+    }
 
     init(store: SessionStore, processObserver: any ProcessExitObserving) {
         self.store = store
@@ -72,9 +91,12 @@ final class SessionLifecycleCoordinator {
         // A headless owner is a scripted or nested run — `codex exec`, `claude
         // -p`, CI — with no pane behind it. There is nothing to jump to and
         // nobody waiting on it, and at the rate agents spawn other agents these
-        // would swamp the real sessions. Drop them before any state is created,
-        // so no later event can resurrect one.
-        if event.headless == true { return }
+        // would swamp the real sessions. Dropped before any state is created,
+        // so no later event can resurrect one — unless the user has asked to
+        // see them (Settings → Sessions), since an agent hosted outside a
+        // terminal is a real session to somebody.
+        let isBackground = event.headless == true
+        if isBackground, !showsBackgroundSessions() { return }
 
         if event.event == "SessionEnd" {
             receiveSessionEnd(event, id: id, processLookup: processLookup)
@@ -110,11 +132,13 @@ final class SessionLifecycleCoordinator {
                 inspectionFailed: {
                     if case .unavailable? = processLookup { return true }
                     return false
-                }()
+                }(),
+                isBackground: isBackground
             )
         } else {
             store.apply(event)
-            reconcileOwnership(for: event, id: id, process: process)
+            reconcileOwnership(
+                for: event, id: id, process: process, isBackground: isBackground)
         }
     }
 
@@ -161,7 +185,8 @@ final class SessionLifecycleCoordinator {
         _ event: HookEvent,
         id: String,
         process: ProcessIdentity?,
-        inspectionFailed: Bool
+        inspectionFailed: Bool,
+        isBackground: Bool
     ) {
         let pane = Self.paneIdentity(for: event)
 
@@ -209,7 +234,8 @@ final class SessionLifecycleCoordinator {
             tool: event.agentTool,
             process: process,
             pane: pane,
-            lastSeen: now()
+            lastSeen: now(),
+            isBackground: isBackground
         ))
     }
 
@@ -248,7 +274,8 @@ final class SessionLifecycleCoordinator {
     private func reconcileOwnership(
         for event: HookEvent,
         id: String,
-        process: ProcessIdentity?
+        process: ProcessIdentity?,
+        isBackground: Bool
     ) {
         let pane = Self.paneIdentity(for: event)
         let owner = process.map { ProcessOwnerKey(process: $0, tool: event.agentTool) }
@@ -276,7 +303,8 @@ final class SessionLifecycleCoordinator {
                 tool: event.agentTool,
                 process: process,
                 pane: pane,
-                lastSeen: now()
+                lastSeen: now(),
+                isBackground: isBackground
             ))
         }
     }

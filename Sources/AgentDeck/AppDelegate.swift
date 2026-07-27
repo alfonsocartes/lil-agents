@@ -55,6 +55,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         self.lifecycle = lifecycle
 
+        // Background-agent visibility is a user setting (Settings → Sessions).
+        // Read through a closure so the coordinator stays independent of the
+        // settings layer, and retire the rows immediately when it is switched
+        // off rather than leaving them until each one ends.
+        let settings = services.settings
+        lifecycle.showsBackgroundSessions = { [weak settings] in
+            settings?.showBackgroundSessions ?? false
+        }
+        settings.onShowBackgroundSessionsChange = { [weak lifecycle] isShown in
+            guard !isShown else { return }
+            lifecycle?.dropBackgroundSessions()
+        }
+
         // Start the event listener.
         let listener = EventListener(
             lifecycle: lifecycle,

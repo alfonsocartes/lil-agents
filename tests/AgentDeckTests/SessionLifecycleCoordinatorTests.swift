@@ -382,6 +382,49 @@ import Testing
         #expect(system.observer.observeCount.isEmpty)
     }
 
+    /// With the Settings toggle on, a background agent is a first-class
+    /// session — an editor-hosted CLI has no controlling terminal but is very
+    /// much something its user is waiting on.
+    @Test func headlessRunsAreTrackedWhenTheUserOptsIn() {
+        let system = makeSystem()
+        system.lifecycle.showsBackgroundSessions = { true }
+
+        system.lifecycle.receive(
+            makeEvent(
+                "SessionStart", id: "exec", tool: "codex",
+                cwd: "/private/tmp", headless: true
+            ),
+            processLookup: nil
+        )
+
+        #expect(system.store.sessions.map(\.id) == ["exec"])
+    }
+
+    /// Turning the toggle back off retires them at once, rather than leaving
+    /// rows the user just asked to stop seeing until each happens to end.
+    @Test func optingBackOutRetiresBackgroundRowsImmediately() {
+        let system = makeSystem()
+        var showsBackground = true
+        system.lifecycle.showsBackgroundSessions = { showsBackground }
+
+        system.lifecycle.receive(
+            makeEvent("SessionStart", id: "exec", tool: "codex", headless: true),
+            processLookup: nil
+        )
+        system.lifecycle.receive(
+            makeEvent("SessionStart", id: "real", tool: "claude", tty: "ttys060"),
+            processLookup: nil
+        )
+        #expect(Set(system.store.sessions.map(\.id)) == ["exec", "real"])
+
+        showsBackground = false
+        system.lifecycle.dropBackgroundSessions()
+
+        // The background row goes; the terminal-backed one is untouched.
+        #expect(system.store.sessions.map(\.id) == ["real"])
+        #expect(system.lifecycle.trackedLifecycleCount == 1)
+    }
+
     @Test func interactiveRunsAreStillTrackedWhenHeadlessIsAbsentOrFalse() {
         let system = makeSystem()
 
