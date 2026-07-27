@@ -111,22 +111,29 @@ struct OverlayView: View {
         .padding(.vertical, 10)
     }
 
+    /// Roughly thirteen rows (26pt each). The panel floats over everything and
+    /// is dragged around by hand, so it stops growing well before it becomes a
+    /// full-height column the user has to move out of their own way.
+    private static let maxSessionListHeight: CGFloat = 360
+
     private func sessionList(now: Date) -> some View {
         let sessions = store.sessions.displayOrdered
-        return VStack(spacing: 1) {
-            ForEach(sessions) { session in
-                OverlaySessionRow(
-                    session: session,
-                    detail: detail(for: session, among: sessions),
-                    now: now
-                ) {
-                    TerminalJumpers.jump(session.jumpTarget)
-                } onRemove: {
-                    store.remove(session.id)
+        return ContentSizedScrollView(maxHeight: Self.maxSessionListHeight) {
+            VStack(spacing: 1) {
+                ForEach(sessions) { session in
+                    OverlaySessionRow(
+                        session: session,
+                        detail: detail(for: session, among: sessions),
+                        now: now
+                    ) {
+                        TerminalJumpers.jump(session.jumpTarget)
+                    } onRemove: {
+                        store.remove(session.id)
+                    }
                 }
             }
+            .padding(4)
         }
-        .padding(4)
     }
 
     /// Disambiguating detail, built ONLY when another session shares this

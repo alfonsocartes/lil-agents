@@ -43,6 +43,13 @@ struct MenuBarContentView: View {
 
     private var activeCount: Int { store.sessions.count }
 
+    /// Roughly seven session rows (~43pt each). Chosen so the whole dropdown —
+    /// header, usage section, list, and the fixed actions below it — still fits
+    /// on a 13" display's visible height with room to spare, rather than
+    /// scaling to the screen: a menu whose length changes with the monitor it
+    /// opens on is harder to build muscle memory for than one that doesn't.
+    private static let maxSessionListHeight: CGFloat = 320
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -152,17 +159,23 @@ struct MenuBarContentView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 18)
         } else {
-            VStack(spacing: 2) {
-                // Same stable project ordering as the overlay (displayOrdered,
-                // defined in OverlayView.swift) so the two surfaces agree and
-                // the user's spatial memory transfers between them. Status is
-                // still obvious per-row via the dot and the detail line.
-                ForEach(store.sessions.displayOrdered) { session in
-                    SessionRow(session: session) {
-                        TerminalJumpers.jump(session.jumpTarget)
-                        dismiss()
-                    } onRemove: {
-                        store.remove(session.id)
+            // Capped and scrollable: the list grew without limit, so running a
+            // dozen agents pushed Settings and Quit off the bottom of the
+            // screen with no way to reach them. The list is the only part that
+            // may overflow — everything below it must stay on screen.
+            ContentSizedScrollView(maxHeight: Self.maxSessionListHeight) {
+                VStack(spacing: 2) {
+                    // Same stable project ordering as the overlay (displayOrdered,
+                    // defined in OverlayView.swift) so the two surfaces agree and
+                    // the user's spatial memory transfers between them. Status is
+                    // still obvious per-row via the dot and the detail line.
+                    ForEach(store.sessions.displayOrdered) { session in
+                        SessionRow(session: session) {
+                            TerminalJumpers.jump(session.jumpTarget)
+                            dismiss()
+                        } onRemove: {
+                            store.remove(session.id)
+                        }
                     }
                 }
             }
