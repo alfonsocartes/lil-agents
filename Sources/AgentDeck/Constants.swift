@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import Synchronization
 
 /// Shared constants for AgentDeck.
 enum AgentDeck {
@@ -11,8 +12,39 @@ enum AgentDeck {
     /// as dead and pruned (safety net for a missed SessionEnd).
     static let staleAfter: TimeInterval = 60 * 60
 
+    /// Test seam mirroring `HookInstaller.homeDirectoryOverride`: redirects the
+    /// runtime directory so a test never writes to — or deletes from — the
+    /// developer's real `~/Library/Application Support/AgentDeck`.
+    ///
+    /// This existed only for the home directory before, which was a real gap
+    /// rather than an oversight of no consequence: `HookInstaller.install()`
+    /// and `uninstall()` write and REMOVE the generated forwarder here, so a
+    /// plain `swift test` deleted the live `forward-event.sh` out from under
+    /// every running CLI session. Hooks then failed with "No such file or
+    /// directory" until the app was relaunched. Tests also execute that
+    /// generated script, so without redirection the only thing standing
+    /// between the harness and the real listener on 127.0.0.1 was a stubbed
+    /// `curl` on `PATH`.
+    internal static var supportDirOverride: URL? {
+        get { supportDirOverrideStorage.withLock { $0 } }
+        set { supportDirOverrideStorage.withLock { $0 = newValue } }
+    }
+    private static let supportDirOverrideStorage = Mutex<URL?>(nil)
+
     /// Directory where AgentDeck keeps its runtime files (forwarder script, etc).
     static var supportDir: URL {
+        if let override = supportDirOverride { return override }
+        // Same hard guard as `HookInstaller.homeDirectory`, for the same
+        // reason and after the same real incident: a test that reaches here
+        // without an override is about to mutate the developer's live install,
+        // so fail loudly instead of silently doing it.
+        if HookInstaller.isRunningUnderTestHarness {
+            fatalError("""
+                AgentDeck.supportDir: refusing to touch the real support directory from a test \
+                process. Set AgentDeck.supportDirOverride to a temp directory first (see \
+                HookInstallerTests.withTempHome).
+                """)
+        }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return base.appendingPathComponent("AgentDeck", isDirectory: true)
     }

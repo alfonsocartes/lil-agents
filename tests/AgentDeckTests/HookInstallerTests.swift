@@ -37,14 +37,23 @@ import Testing
         }
     }
 
-    /// Runs `body` with HookInstaller redirected at a fresh temp home, then
-    /// restores the override so the real ~/.claude is never touched.
+    /// Runs `body` with BOTH the hook-config home and the runtime support
+    /// directory redirected at fresh temp dirs, then restores the overrides.
+    ///
+    /// The support dir matters as much as the home dir: `install()` writes the
+    /// generated forwarder there and `uninstall()` deletes it, so without this
+    /// a test run removed the developer's live `forward-event.sh` and broke
+    /// hook delivery for every running CLI session until the app relaunched.
     private func withTempHome(_ body: (URL) throws -> Void) rethrows {
         let home = makeTempDir()
+        let support = makeTempDir()
         HookInstaller.homeDirectoryOverride = home
+        AgentDeck.supportDirOverride = support
         defer {
             HookInstaller.homeDirectoryOverride = nil
+            AgentDeck.supportDirOverride = nil
             cleanup(home)
+            cleanup(support)
         }
         try body(home)
     }
