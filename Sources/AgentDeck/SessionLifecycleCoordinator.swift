@@ -286,6 +286,21 @@ final class SessionLifecycleCoordinator {
             terminate(sessionID: incumbent, preserving: owner)
         }
 
+        // Pane conflicts are resolved here too, not only on SessionStart.
+        // `installLifecycle` writes the pane index unconditionally, so without
+        // this the index silently changes hands while the incumbent lifecycle
+        // still records that pane — and since its own `releasePane` then no
+        // longer matches the index, nothing ever evicts it. It survives to the
+        // stale sweep, and clicking it jumps to a pane another session owns.
+        // Reachable whenever a SessionStart POST is dropped, which the
+        // forwarder does silently by design: the first event we see for a
+        // session can be a mid-stream one.
+        if let pane,
+           let incumbent = sessionIDByPane[PaneOwnerKey(pane: pane, tool: event.agentTool)],
+           incumbent != id {
+            terminate(sessionID: incumbent, preserving: owner)
+        }
+
         if var lifecycle = lifecycleByID[id] {
             if let process, lifecycle.process != process {
                 releaseProcess(lifecycle.process, tool: lifecycle.tool, ownedBy: id)

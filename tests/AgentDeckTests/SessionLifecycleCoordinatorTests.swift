@@ -546,6 +546,38 @@ import Testing
         #expect(system.store.sessions.map(\.id) == ["new"])
     }
 
+    /// A session's first DELIVERED event can be a mid-stream one — the
+    /// forwarder drops POSTs silently, so a SessionStart is easy to lose. That
+    /// path must still evict whoever holds the pane, or the index changes hands
+    /// while the incumbent keeps recording the pane it no longer owns, and
+    /// nothing can ever retire it.
+    @Test func midStreamEventOnAnOccupiedPaneEvictsTheIncumbent() {
+        let system = makeSystem()
+
+        system.lifecycle.receive(
+            makeEvent("SessionStart", id: "old", tty: "ttys003"),
+            processLookup: nil
+        )
+        // "new" is seen for the first time via Stop, not SessionStart.
+        system.lifecycle.receive(
+            makeEvent("Stop", id: "new", tty: "ttys003"),
+            processLookup: nil
+        )
+
+        #expect(system.store.sessions.map(\.id) == ["new"])
+        #expect(system.lifecycle.trackedLifecycleCount == 1)
+        #expect(system.lifecycle.trackedPaneCount == 1)
+
+        // And the pane is genuinely reclaimable afterwards, rather than
+        // pointing at a lifecycle that no longer exists.
+        system.lifecycle.receive(
+            makeEvent("SessionStart", id: "third", tty: "ttys003"),
+            processLookup: nil
+        )
+        #expect(system.store.sessions.map(\.id) == ["third"])
+        #expect(system.lifecycle.trackedPaneCount == 1)
+    }
+
     @Test func tmuxHostTTYDoesNotCollapseIndependentPanes() {
         let system = makeSystem()
 

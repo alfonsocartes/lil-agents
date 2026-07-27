@@ -242,16 +242,25 @@ enum HookInstaller {
         # none of this. Hooks are spawned by the CLI itself, so the nearest
         # runtime ancestor is that CLI.
         #
-        # Both are resolved in a single pass on purpose. Running them as two
-        # separate walks meant an install pass 2 exists to serve could never
-        # match in pass 1, so every hook event walked the whole chain to pid 1
-        # before the second walk even started — measured at 18 `ps` forks
-        # against 5 for the old code, roughly 60-80ms added to EVERY tool call,
-        # since the CLI waits for PreToolUse hooks before running the tool.
+        # The NEAREST ancestor matching either rule wins, and the walk stops
+        # there. Preferring an exact name match at ANY depth over a closer
+        # runtime was both slower and wrong:
+        #
+        #  - Slower, because an interpreter-backed install can never produce an
+        #    exact match, so every hook event walked the entire ancestry to pid
+        #    1 — measured at 17 `ps` forks against 8 for a native install, on a
+        #    path the CLI blocks on before each tool call.
+        #  - Wrong, because a `claude` or `codex` ancestor ABOVE the real owner
+        #    would win. A native `claude` whose Bash tool launches an
+        #    npm-installed `claude` would attribute the nested run's pid and
+        #    tty to the outer session — the exact mis-attribution this whole
+        #    routine exists to prevent.
+        #
+        # Nearest-wins is also just the right model: hooks are spawned by the
+        # CLI that owns the session, so the first plausible CLI above us IS it.
         if [ -n "$owner_match" ]; then
           pid=$PPID
           depth=0
-          runtime_pid=""
           while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ "$depth" -lt 32 ]; do
             comm="$(ps -o comm= -p "$pid" 2>/dev/null)"
             base="${comm##*/}"
@@ -259,17 +268,12 @@ enum HookInstaller {
               agent_pid="$pid"
               break
             fi
-            if [ -z "$runtime_pid" ]; then
-              case "$base" in
-                node|bun|deno) runtime_pid="$pid" ;;
-              esac
-            fi
+            case "$base" in
+              node|bun|deno) agent_pid="$pid"; break ;;
+            esac
             pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
             depth=$((depth + 1))
           done
-          if [ -z "$agent_pid" ]; then
-            agent_pid="$runtime_pid"
-          fi
         fi
 
         if [ -n "$agent_pid" ]; then

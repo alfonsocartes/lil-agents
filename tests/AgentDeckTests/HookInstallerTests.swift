@@ -338,16 +338,47 @@ import Testing
     }
 
     @Test func forwarderResolvesAnInteractiveCLIToItsOwnPane() throws {
+        // A native install in a terminal: the hook's shell, then the CLI.
+        let tree: [Int32: FakeProcess] = [
+            ProcessInfo.processInfo.processIdentifier:
+                FakeProcess(comm: "sh", ppid: 9003, tty: "??"),
+            9003: FakeProcess(comm: "/usr/local/bin/claude", ppid: 1, tty: "ttys003"),
+        ]
+
         try withTempHome { _ in
             try HookInstaller.install(port: AgentDeck.port)
 
-            let posted = try runGeneratedForwarder(
-                tool: "claude", event: "Stop", tree: nestedAgentTree
-            )
+            let posted = try runGeneratedForwarder(tool: "claude", event: "Stop", tree: tree)
 
             #expect(posted["agent_pid"] as? Int == 9003)
             #expect(posted["tty"] as? String == "/dev/ttys003")
             #expect(posted["headless"] == nil)
+        }
+    }
+
+    /// The nearest plausible CLI wins. Preferring an exact name match at any
+    /// depth would attribute a nested npm-installed run to the native `claude`
+    /// further up the chain — handing it the parent's pid and pane, which is
+    /// the mis-attribution this routine exists to prevent.
+    @Test func forwarderPrefersTheNearestOwnerOverAFartherExactMatch() throws {
+        let tree: [Int32: FakeProcess] = [
+            ProcessInfo.processInfo.processIdentifier:
+                FakeProcess(comm: "sh", ppid: 9401, tty: "??"),
+            // Nested `claude -p`, npm-installed, so it presents as the runtime.
+            9401: FakeProcess(comm: "/Users/x/.nvm/versions/node/v24/bin/node", ppid: 9402, tty: "??"),
+            9402: FakeProcess(comm: "zsh", ppid: 9403, tty: "??"),
+            // The native interactive session that ultimately spawned it.
+            9403: FakeProcess(comm: "/usr/local/bin/claude", ppid: 1, tty: "ttys077"),
+        ]
+
+        try withTempHome { _ in
+            try HookInstaller.install(port: AgentDeck.port)
+
+            let posted = try runGeneratedForwarder(tool: "claude", event: "Stop", tree: tree)
+
+            #expect(posted["agent_pid"] as? Int == 9401)   // the nested run
+            #expect(posted["headless"] as? Bool == true)
+            #expect(posted["tty"] == nil)                  // never ttys077
         }
     }
 
