@@ -2,7 +2,8 @@ import Foundation
 import Observation
 
 /// User-configurable notification preferences for the Settings window.
-/// Persisted to `UserDefaults.standard` immediately on change (`didSet`), and
+/// Persisted to the injected `UserDefaults` (`.standard` in the app)
+/// immediately on change (`didSet`), and
 /// read back in `init` — with the defaults below when a key hasn't been set
 /// yet (first launch). @MainActor since it's only ever touched from UI code
 /// and the (also @MainActor) SessionStore/Notifier.
@@ -21,22 +22,22 @@ final class AppSettings {
 
     /// Master switch. When off, no notification of any kind fires.
     var notificationsEnabled: Bool {
-        didSet { UserDefaults.standard.set(notificationsEnabled, forKey: Keys.notificationsEnabled) }
+        didSet { defaults.set(notificationsEnabled, forKey: Keys.notificationsEnabled) }
     }
 
     /// Notify when a session is blocked on a permission/approval prompt (red).
     var notifyOnApproval: Bool {
-        didSet { UserDefaults.standard.set(notifyOnApproval, forKey: Keys.notifyOnApproval) }
+        didSet { defaults.set(notifyOnApproval, forKey: Keys.notifyOnApproval) }
     }
 
     /// Notify when a session finishes its turn and is waiting on the user (yellow).
     var notifyOnIdle: Bool {
-        didSet { UserDefaults.standard.set(notifyOnIdle, forKey: Keys.notifyOnIdle) }
+        didSet { defaults.set(notifyOnIdle, forKey: Keys.notifyOnIdle) }
     }
 
     /// Play the default notification sound alongside the banner.
     var playSound: Bool {
-        didSet { UserDefaults.standard.set(playSound, forKey: Keys.playSound) }
+        didSet { defaults.set(playSound, forKey: Keys.playSound) }
     }
 
     /// Opt-in for Claude usage tracking (Settings toggle). Default **false**:
@@ -44,13 +45,13 @@ final class AppSettings {
     /// surprise, and the Keychain fallback path can show a one-time macOS
     /// consent prompt — both should only happen after an explicit opt-in.
     var claudeUsageEnabled: Bool {
-        didSet { UserDefaults.standard.set(claudeUsageEnabled, forKey: Keys.claudeUsageEnabled) }
+        didSet { defaults.set(claudeUsageEnabled, forKey: Keys.claudeUsageEnabled) }
     }
 
     /// Opt-in for Codex/ChatGPT usage tracking (Settings toggle). Default
     /// **false** — same rationale as `claudeUsageEnabled`.
     var codexUsageEnabled: Bool {
-        didSet { UserDefaults.standard.set(codexUsageEnabled, forKey: Keys.codexUsageEnabled) }
+        didSet { defaults.set(codexUsageEnabled, forKey: Keys.codexUsageEnabled) }
     }
 
     /// Show agents that have no terminal of their own — scripted or nested
@@ -65,7 +66,7 @@ final class AppSettings {
     /// it back. Hence the toggle rather than a hardcoded policy.
     var showBackgroundSessions: Bool {
         didSet {
-            UserDefaults.standard.set(showBackgroundSessions, forKey: Keys.showBackgroundSessions)
+            defaults.set(showBackgroundSessions, forKey: Keys.showBackgroundSessions)
             onShowBackgroundSessionsChange?(showBackgroundSessions)
         }
     }
@@ -75,8 +76,16 @@ final class AppSettings {
     /// them until the next sweep. Wired in AppDelegate; nil in tests.
     var onShowBackgroundSessionsChange: ((Bool) -> Void)?
 
-    init() {
-        let defaults = UserDefaults.standard
+    /// Where these preferences are read from and written to. Injectable for
+    /// the same reason `LoginItemController` takes one: tests that construct
+    /// an `AppSettings` would otherwise read and write the ambient
+    /// process-wide domain, leaving each test dependent on whatever a
+    /// previous run left behind — and writing a plist to disk as a side
+    /// effect. Production always gets `.standard`.
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         notificationsEnabled = defaults.object(forKey: Keys.notificationsEnabled) as? Bool ?? true
         notifyOnApproval = defaults.object(forKey: Keys.notifyOnApproval) as? Bool ?? true
         notifyOnIdle = defaults.object(forKey: Keys.notifyOnIdle) as? Bool ?? true

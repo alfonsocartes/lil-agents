@@ -45,57 +45,6 @@ private struct FakeError: Error, LocalizedError {
     var errorDescription: String? { "fake backend error" }
 }
 
-// MARK: - Scratch defaults
-
-/// An in-memory stand-in for a `UserDefaults` suite. `LoginItemController`
-/// takes a concrete `UserDefaults`, not a protocol, so a real suite
-/// (`UserDefaults(suiteName:)`) was the first thing tried — but every write
-/// to a suite routes through `cfprefsd`, which flushes
-/// `~/Library/Preferences/<suiteName>.plist` to disk asynchronously and on
-/// its own schedule, as a separate long-lived daemon process. Confirmed by
-/// observation: stray plists could still appear *seconds* after the test
-/// process had already exited, so no in-process teardown —
-/// `removePersistentDomain`, `synchronize()`, deleting the file directly, any
-/// combination — could reliably win that race. Overriding the handful of
-/// accessors `LoginItemController` and these tests actually call sidesteps
-/// `cfprefsd` entirely: nothing is ever written to disk, so there's nothing
-/// left to race or clean up.
-@MainActor
-private final class InMemoryDefaults: UserDefaults {
-    // `nonisolated(unsafe)`, not `Mutex`-guarded: these overrides must match
-    // `UserDefaults`'s plain (non-isolated) Objective-C method signatures, so
-    // they can't themselves be `@MainActor` even though the class is. Safe
-    // without a lock because every real caller — `LoginItemController`'s
-    // instance methods and this suite's `@MainActor` test bodies — only ever
-    // reaches this from the main actor; nothing here actually runs
-    // concurrently.
-    private nonisolated(unsafe) var storage: [String: Any] = [:]
-
-    override func set(_ value: Any?, forKey defaultName: String) {
-        storage[defaultName] = value
-    }
-
-    override func object(forKey defaultName: String) -> Any? {
-        storage[defaultName]
-    }
-
-    override func bool(forKey defaultName: String) -> Bool {
-        (storage[defaultName] as? Bool) ?? false
-    }
-
-    override func removeObject(forKey defaultName: String) {
-        storage.removeValue(forKey: defaultName)
-    }
-}
-
-/// Hands `body` a fresh `InMemoryDefaults`, so `consumeFirstLaunchPrompt`
-/// tests don't leak the `loginItem.promptShown` flag between runs or collide
-/// with `.standard` (which the real app reads and writes) — and, since it
-/// never touches disk, don't leak a `~/Library/Preferences` plist either.
-private func withScratchDefaults(_ body: (UserDefaults) -> Void) {
-    body(InMemoryDefaults())
-}
-
 // MARK: - Tests
 
 @MainActor

@@ -48,17 +48,21 @@ private final class StubUsageProvider: UsageProviding, Sendable {
 
 private let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)
 
-/// `AppSettings` persists straight to `UserDefaults.standard` with no
-/// injectable override (see AppSettings.swift — it has no seam like
-/// HookInstaller's `homeDirectoryOverride`). Explicitly seeding both usage
-/// keys before constructing means every test starts from a KNOWN state
-/// regardless of what a previous test run left behind in this process's
-/// defaults domain.
+/// Builds an `AppSettings` over a fresh `InMemoryDefaults` (TestSupport.swift)
+/// rather than the ambient process-wide domain, so every test starts from a
+/// KNOWN state — not one carrying over whatever a previous run left behind —
+/// and the suite writes no plist to disk as a side effect.
+///
+/// Seeding the two usage keys *before* constructing matters: `AppSettings`
+/// reads them in `init`, and its `didSet` writers are what persist later
+/// changes, so a value set afterwards wouldn't be reflected in the instance
+/// under test.
 @MainActor
 private func makeSettings(claudeEnabled: Bool = false, codexEnabled: Bool = false) -> AppSettings {
-    UserDefaults.standard.set(claudeEnabled, forKey: "usage.claudeEnabled")
-    UserDefaults.standard.set(codexEnabled, forKey: "usage.codexEnabled")
-    return AppSettings()
+    let defaults = InMemoryDefaults()
+    defaults.set(claudeEnabled, forKey: "usage.claudeEnabled")
+    defaults.set(codexEnabled, forKey: "usage.codexEnabled")
+    return AppSettings(defaults: defaults)
 }
 
 /// Polls `condition` via `Task.yield()` until it's true or `timeout` elapses.
