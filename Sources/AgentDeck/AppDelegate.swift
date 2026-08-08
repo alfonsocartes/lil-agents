@@ -99,12 +99,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // OverlayController builds the panel lazily, here on first show.
         services.overlay.show()
 
-        // Offer to enable launch-at-login once, the first time the app has
-        // ever run. Silent on the AGENTDECK_NO_INSTALL smoke-test path (see
-        // the hook-install block above) for the same reason: a modal alert
-        // would hang a headless/scripted run waiting on user input.
-        promptForLoginItemIfNeeded()
-
         // The menu bar presence is the SwiftUI `MenuBarExtra` scene in
         // `AgentDeckApp` (status icon + session dropdown); the legacy
         // NSStatusItem/NSMenu implementation has been removed. Settings is now
@@ -126,12 +120,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.services.overlay.toggle()
         }
         NSLog("AgentDeck hotkey ⌥⌘J registered: \(registered)")
+
+        // Offer to enable launch-at-login last, once hotkey registration and
+        // the notification-permission request above have already run.
+        // `alert.runModal()` below is synchronous and the app is `.accessory`
+        // (so the alert can open behind another app, per the comment inside),
+        // meaning it could otherwise sit unanswered indefinitely — gating the
+        // hotkey and notification prompt on a modal nobody's looking at.
+        // Silent on the AGENTDECK_NO_INSTALL smoke-test path (see the
+        // hook-install block above) for the same reason: a modal alert would
+        // hang a headless/scripted run waiting on user input.
+        promptForLoginItemIfNeeded()
     }
 
-    /// Shows the one-shot "start at login?" alert on the very first launch,
-    /// if launch-at-login is available and not already enabled. No-op on
-    /// every later launch — `consumeFirstLaunchPrompt()` returns true at
-    /// most once, ever.
+    /// Shows the one-shot "start at login?" alert at most once, ever, if
+    /// launch-at-login is available and not already enabled.
+    /// `consumeFirstLaunchPrompt()` is what guarantees the "at most once" —
+    /// not "the very first launch": a user upgrading from a version that
+    /// predates the underlying defaults key has never had it written, so it
+    /// fires on their first launch *after* the upgrade, not the app's actual
+    /// first-ever run.
     private func promptForLoginItemIfNeeded() {
         // Never prompt on the smoke-test path — a modal here would hang a
         // headless/scripted run waiting on input that will never come.
@@ -144,13 +152,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         alert.messageText = "Start lil agents at login?"
-        alert.informativeText = "lil agents watches your sessions in the background — it's only useful when it's already running. It stays in the menu bar; no window opens."
+        alert.informativeText = "lil agents watches your sessions in the background — it's only useful when it's already running. It starts in the menu bar, with the session overlay showing as usual."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Start at Login")
         alert.addButton(withTitle: "Not Now")
 
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        services.loginItem.isEnabled = true
+        showLoginItemOutcomeAlert()
+    }
+
+    /// Reports what actually happened after the assignment above, since
+    /// `isEnabled = true` can fail silently — e.g. `kSMErrorLaunchDeniedByUser`
+    /// if the user previously opted out via System Settings — or succeed into
+    /// `.requiresApproval`, where the item is registered but macOS won't run
+    /// it until the user approves it in Login Items. Either way the "Start at
+    /// Login" alert has already closed, so without this the user would walk
+    /// away believing launch-at-login is on when it silently isn't.
+    private func showLoginItemOutcomeAlert() {
+        let alert = NSAlert()
+
+        if !services.loginItem.isEnabled {
+            alert.messageText = "Couldn't start lil agents at login"
+            alert.informativeText = services.loginItem.lastError
+                ?? "Failed to register lil agents as a login item."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Open Login Items…")
+            alert.addButton(withTitle: "OK")
+        } else if services.loginItem.needsApproval {
+            alert.messageText = "One more step"
+            alert.informativeText = "macOS needs your approval in Login Items before lil agents will start automatically."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "Open Login Items…")
+            alert.addButton(withTitle: "Later")
+        } else {
+            return
+        }
+
         if alert.runModal() == .alertFirstButtonReturn {
-            services.loginItem.isEnabled = true
+            services.loginItem.openSystemSettings()
         }
     }
 

@@ -83,17 +83,28 @@ final class LoginItemController {
 
     /// Re-reads `backend.status`. Cheap and safe to call as often as needed —
     /// there's no caching or debouncing to worry about.
+    ///
+    /// Also clears `lastError`: a status that now reads `.enabled` (e.g. the
+    /// user fixed it by hand in System Settings) shouldn't leave a stale error
+    /// rendered underneath a toggle that's back on. The `isEnabled` setter's
+    /// catch block relies on this running *before* it re-sets `lastError`, by
+    /// calling `refresh()` first and assigning `lastError` after — don't
+    /// reorder that.
     func refresh() {
         status = backend.status
+        lastError = nil
     }
 
     func openSystemSettings() {
         backend.openSystemSettings()
     }
 
-    /// Returns `true` at most once, ever, for the very first launch where the
-    /// login item is available but not yet enabled — the caller uses this to
-    /// show a one-time "want AgentDeck to start at login?" prompt.
+    /// Returns `true` at most once, ever, for the first launch where the
+    /// `promptShown` flag isn't already set and the login item is available
+    /// but not yet enabled — the caller uses this to show a one-time "want
+    /// AgentDeck to start at login?" prompt. For someone upgrading from a
+    /// version that predates this key, that's their first launch *after*
+    /// upgrading, not literally the app's very first launch ever.
     ///
     /// The `promptShown` flag is written to `defaults` *before* returning
     /// `true`, not after the user answers: if the app crashes or is
@@ -105,6 +116,16 @@ final class LoginItemController {
         guard !defaults.bool(forKey: Keys.promptShown) else { return false }
         defaults.set(true, forKey: Keys.promptShown)
         return true
+    }
+
+    /// Clears the one-shot `promptShown` flag so a future reinstall is
+    /// treated as a fresh first launch and shows the prompt again. Static
+    /// (rather than an instance method) because `Uninstaller` runs its
+    /// cleanup steps without a live `LoginItemController` around to call
+    /// through, and the key lives in `UserDefaults` independent of any
+    /// particular instance.
+    static func forgetFirstLaunchPrompt(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: Keys.promptShown)
     }
 }
 

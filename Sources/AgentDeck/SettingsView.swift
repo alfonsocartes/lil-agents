@@ -69,7 +69,7 @@ struct SettingsView: View {
                 .disabled(!loginItem.isAvailable)
 
             if loginItem.isAvailable {
-                Text("Starts lil agents automatically when you log in. It stays in the menu bar — no window opens.")
+                Text("Starts lil agents automatically when you log in — menu bar icon and session overlay, same as launching it by hand.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

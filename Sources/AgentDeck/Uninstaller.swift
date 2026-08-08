@@ -66,6 +66,12 @@ enum Uninstaller {
             issues.append(message)
         }
 
+        // So a later reinstall is treated as a fresh first launch and shows
+        // the "start at login?" prompt again — otherwise the flag survives in
+        // Preferences (it's not under AgentDeck.supportDir) and the prompt
+        // never fires.
+        LoginItemController.forgetFirstLaunchPrompt()
+
         if !issues.isEmpty {
             showIssuesAlert(issues)
         }
