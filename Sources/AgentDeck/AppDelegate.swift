@@ -99,6 +99,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // OverlayController builds the panel lazily, here on first show.
         services.overlay.show()
 
+        // Offer to enable launch-at-login once, the first time the app has
+        // ever run. Silent on the AGENTDECK_NO_INSTALL smoke-test path (see
+        // the hook-install block above) for the same reason: a modal alert
+        // would hang a headless/scripted run waiting on user input.
+        promptForLoginItemIfNeeded()
+
         // The menu bar presence is the SwiftUI `MenuBarExtra` scene in
         // `AgentDeckApp` (status icon + session dropdown); the legacy
         // NSStatusItem/NSMenu implementation has been removed. Settings is now
@@ -120,6 +126,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.services.overlay.toggle()
         }
         NSLog("AgentDeck hotkey ⌥⌘J registered: \(registered)")
+    }
+
+    /// Shows the one-shot "start at login?" alert on the very first launch,
+    /// if launch-at-login is available and not already enabled. No-op on
+    /// every later launch — `consumeFirstLaunchPrompt()` returns true at
+    /// most once, ever.
+    private func promptForLoginItemIfNeeded() {
+        // Never prompt on the smoke-test path — a modal here would hang a
+        // headless/scripted run waiting on input that will never come.
+        guard ProcessInfo.processInfo.environment["AGENTDECK_NO_INSTALL"] == nil else { return }
+        guard services.loginItem.consumeFirstLaunchPrompt() else { return }
+
+        // The app is `.accessory`, so without activating first the alert can
+        // open behind other apps.
+        NSApp.activate()
+
+        let alert = NSAlert()
+        alert.messageText = "Start lil agents at login?"
+        alert.informativeText = "lil agents watches your sessions in the background — it's only useful when it's already running. It stays in the menu bar; no window opens."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Start at Login")
+        alert.addButton(withTitle: "Not Now")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            services.loginItem.isEnabled = true
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

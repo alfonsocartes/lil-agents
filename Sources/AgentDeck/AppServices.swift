@@ -44,6 +44,11 @@ final class AppServices {
     /// observer at construction, so it must be alive for the app's lifetime.
     let activationPolicy = ActivationPolicyController()
 
+    /// Launch-at-login toggle, backed by `SMAppService`. Lives here (rather
+    /// than being constructed inline in Settings) so `AppDelegate` can also
+    /// consume its one-shot first-launch prompt.
+    let loginItem = LoginItemController()
+
     init() {
         usage = UsageStore(settings: settings)
         overlay = OverlayController(store: store, usage: usage)

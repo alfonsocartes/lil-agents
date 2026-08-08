@@ -8,6 +8,11 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var settings: AppSettings
 
+    /// Launch-at-login toggle state. `@Observable`, not `@Bindable`, so a
+    /// plain `let` tracks its reads fine; the Toggle below needs a manual
+    /// `Binding` since `isEnabled` isn't exposed as a SwiftUI binding.
+    let loginItem: LoginItemController
+
     /// Drives the uninstall confirmation dialog. The old NSAlert confirmation
     /// lived in `Uninstaller`; the confirmation is now SwiftUI's, and
     /// `Uninstaller.performUninstall()` runs only after the user confirms.
@@ -15,6 +20,10 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            generalSection
+
+            Divider()
+
             notificationsSection
 
             Divider()
@@ -31,6 +40,67 @@ struct SettingsView: View {
         }
         .padding(20)
         .frame(width: 380)
+        .onAppear { loginItem.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            loginItem.refresh()
+        }
+    }
+
+    /// The user can flip the login item off in System Settings at any time and
+    /// `SMAppService` has no way to tell us — no KVO, no delegate, no
+    /// notification — so the only option is to re-read `status` on demand.
+    ///
+    /// `.onAppear` alone isn't enough: it fires when this view is created, so
+    /// a Settings window left open while the user visits System Settings would
+    /// keep showing a stale toggle. That's the likeliest path to hit, since
+    /// the `needsApproval` warning below sends people there by design. Hence
+    /// also refreshing whenever the app comes back to the foreground.
+    private var generalSection: some View {
+        let isEnabled = Binding(
+            get: { loginItem.isEnabled },
+            set: { loginItem.isEnabled = $0 }
+        )
+
+        return VStack(alignment: .leading, spacing: 14) {
+            Text("General")
+                .font(.headline)
+
+            Toggle("Launch at login", isOn: isEnabled)
+                .disabled(!loginItem.isAvailable)
+
+            if loginItem.isAvailable {
+                Text("Starts lil agents automatically when you log in. It stays in the menu bar — no window opens.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Available in the installed app only.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if loginItem.needsApproval {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("macOS is waiting on your approval before this can start automatically.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button("Open Login Items…") {
+                        loginItem.openSystemSettings()
+                    }
+                    .buttonStyle(.link)
+                }
+            }
+
+            if let lastError = loginItem.lastError {
+                Text(lastError)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private var notificationsSection: some View {
@@ -99,7 +169,7 @@ struct SettingsView: View {
             Text("Uninstall")
                 .font(.headline)
 
-            Text("This removes lil agents' hooks, its stay-awake system rule, and its support files.")
+            Text("This removes lil agents' hooks, its login item, its stay-awake system rule, and its support files.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -117,7 +187,7 @@ struct SettingsView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This removes lil agents' hooks, its stay-awake system rule, and its support files, then quits and reveals the app in Finder so you can drag it to the Trash. This can't be undone.")
+                Text("This removes lil agents' hooks, its login item, its stay-awake system rule, and its support files, then quits and reveals the app in Finder so you can drag it to the Trash. This can't be undone.")
             }
         }
     }
