@@ -38,7 +38,7 @@ struct AgentDeckApp: App {
         // environment action; `ActivationPolicyController` handles making it
         // frontmost (and reverting) in this accessory app.
         Settings {
-            SettingsView(settings: appDelegate.services.settings)
+            SettingsView(settings: appDelegate.services.settings, loginItem: appDelegate.services.loginItem)
         }
     }
 }

@@ -1,9 +1,11 @@
 import AppKit
+import ServiceManagement
 
 /// Fully reverses lil agents' footprint on the machine: CLI hooks, the
-/// stay-awake sudoers rule (and the disablesleep flag if it's on), and the
-/// app's support directory. Triggered from the Uninstall action in Settings
-/// after a native confirmation dialog (the confirmation is SwiftUI's, so this
+/// launch-at-login registration, the stay-awake sudoers rule (and the
+/// disablesleep flag if it's on), and the app's support directory. Triggered
+/// from the Uninstall action in Settings after a native confirmation dialog
+/// (the confirmation is SwiftUI's, so this
 /// runs only once the user has already confirmed). Never crashes — every step
 /// is best-effort and logs/surfaces failures without aborting the remaining
 /// steps, so a partially-broken install can still be cleaned up.
@@ -34,6 +36,21 @@ enum Uninstaller {
             issues.append(message)
         }
 
+        do {
+            // Only `.enabled`/`.requiresApproval` have anything to remove.
+            // `.notRegistered` is already clean, and `.notFound` means we're
+            // running unbundled — unregistering either would just throw and
+            // report a failure that isn't one.
+            let status = SMAppService.mainApp.status
+            if status == .enabled || status == .requiresApproval {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            let message = "Failed to remove login item: \(error.localizedDescription)"
+            NSLog("Uninstaller: \(message)")
+            issues.append(message)
+        }
+
         if let message = revertStayAwake() {
             NSLog("Uninstaller: \(message)")
             issues.append(message)
@@ -48,6 +65,12 @@ enum Uninstaller {
             NSLog("Uninstaller: \(message)")
             issues.append(message)
         }
+
+        // So a later reinstall is treated as a fresh first launch and shows
+        // the "start at login?" prompt again — otherwise the flag survives in
+        // Preferences (it's not under AgentDeck.supportDir) and the prompt
+        // never fires.
+        LoginItemController.forgetFirstLaunchPrompt()
 
         if !issues.isEmpty {
             showIssuesAlert(issues)
