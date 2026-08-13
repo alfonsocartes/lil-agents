@@ -32,7 +32,7 @@ final class HotKeyCenter {
         )
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
 
-        InstallEventHandler(GetApplicationEventTarget(), { _, event, userData in
+        let handlerStatus = InstallEventHandler(GetApplicationEventTarget(), { _, event, userData in
             guard let userData, let event else { return noErr }
             let center = Unmanaged<HotKeyCenter>.fromOpaque(userData).takeUnretainedValue()
             var received = EventHotKeyID()
@@ -54,6 +54,15 @@ final class HotKeyCenter {
             return noErr
         }, 1, &spec, selfPtr, &eventHandler)
 
+        guard handlerStatus == noErr else {
+            // The handler never got installed, so there's nothing for a
+            // hotkey registration to call into — don't register one, and
+            // don't leave a dangling `eventHandler` around for `unregister()`
+            // to trip over (InstallEventHandler leaves the out-param
+            // untouched on failure, so it's already nil here).
+            return false
+        }
+
         let id = EventHotKeyID(signature: signature, id: hotKeyID)
         let status = RegisterEventHotKey(
             keyCode,
@@ -63,7 +72,14 @@ final class HotKeyCenter {
             0,
             &hotKeyRef
         )
-        return status == noErr
+        guard status == noErr else {
+            // The hotkey itself was refused (e.g. combo already claimed) —
+            // tear down the handler we just installed so this call leaves no
+            // half-registered state behind for `unregister()` to find later.
+            unregister()
+            return false
+        }
+        return true
     }
 
     func unregister() {
