@@ -3,16 +3,17 @@ import PackageDescription
 
 let package = Package(
     name: "AgentDeck",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v26), .iOS(.v18)],
     dependencies: [
         // Sparkle powers in-app auto-updates (Check for Updates… + background checks).
+        // macOS-only: UsageCore is the iOS-safe target and must not grow this dep.
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
     ],
     targets: [
         .executableTarget(
             name: "AgentDeck",
             dependencies: [
-                .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "Sparkle", package: "Sparkle", condition: .when(platforms: [.macOS])),
             ],
             path: "Sources/AgentDeck",
             resources: [
@@ -28,6 +29,10 @@ let package = Package(
                 ])
             ]
         ),
+        .target(
+            name: "UsageCore",
+            path: "Sources/UsageCore"
+        ),
         .testTarget(
             name: "AgentDeckTests",
             dependencies: ["AgentDeck"],
@@ -35,6 +40,11 @@ let package = Package(
             resources: [
                 .process("../../Sources/AgentDeck/Resources"),
             ]
+        ),
+        .testTarget(
+            name: "UsageCoreTests",
+            dependencies: ["UsageCore"],
+            path: "tests/UsageCoreTests"
         )
     ]
 )
