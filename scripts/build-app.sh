@@ -27,15 +27,10 @@ cp "$BIN" "$APP_DIR/Contents/MacOS/AgentDeck"
 cp "$ROOT/packaging/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$ROOT/packaging/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
-# Generated Bundle.module loads Bundle.main.bundleURL/AgentDeck_AgentDeck.bundle
-# — the .app root, not Contents/MacOS.
-BIN_DIR="$(dirname "$BIN")"
-RESOURCE_BUNDLE="$BIN_DIR/AgentDeck_AgentDeck.bundle"
-if [[ ! -d "$RESOURCE_BUNDLE" ]]; then
-    echo "error: resource bundle not found at $RESOURCE_BUNDLE" >&2
-    exit 1
-fi
-cp -R "$RESOURCE_BUNDLE" "$APP_DIR/AgentDeck_AgentDeck.bundle"
+# Logos live in Contents/Resources so codesign sees a normal app layout.
+# Do not put AgentDeck_AgentDeck.bundle at the .app root — that is
+# "unsealed contents present in the bundle root" and fails Developer ID.
+cp "$ROOT/Sources/AgentDeck/Resources/"*.svg "$APP_DIR/Contents/Resources/"
 
 echo "==> Embedding Sparkle.framework"
 SPARKLE_FRAMEWORK="$(find .build -path '*macos-arm64_x86_64/Sparkle.framework' -type d | head -1)"

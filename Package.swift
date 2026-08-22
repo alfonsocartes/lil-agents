@@ -31,7 +31,10 @@ let package = Package(
         .testTarget(
             name: "AgentDeckTests",
             dependencies: ["AgentDeck"],
-            path: "tests/AgentDeckTests"
+            path: "tests/AgentDeckTests",
+            resources: [
+                .process("../../Sources/AgentDeck/Resources"),
+            ]
         )
     ]
 )
