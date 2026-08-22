@@ -183,7 +183,7 @@ import Testing
         #expect(forced.claude.lastError == nil)
     }
 
-    @Test func refreshNowStillHonorsRetryAfter() async {
+    @Test func refreshNowBypassesRetryAfterSoANewTokenCanFetch() async {
         let env = makeEnv(claude: StubUsageProvider([
             .failure(.rateLimited(retryAfter: 120)),
             .success(usage),
@@ -193,8 +193,10 @@ import Testing
         _ = await env.refresher.refreshAll(settings: UsageSettings(claudeEnabled: true), minAge: 60)
         #expect(env.claude.callCount == 1)
 
-        _ = await env.refresher.refreshNow(settings: UsageSettings(claudeEnabled: true))
-        #expect(env.claude.callCount == 1)
+        let forced = await env.refresher.refreshNow(settings: UsageSettings(claudeEnabled: true))
+        #expect(env.claude.callCount == 2)
+        #expect(forced.claude.usage == usage)
+        #expect(forced.claude.retryAfterUntil == nil)
     }
 
     @Test func defaultMinAgeIsTwentyMinutes() {

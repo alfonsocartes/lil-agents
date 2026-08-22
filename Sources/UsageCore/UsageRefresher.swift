@@ -46,8 +46,9 @@ public actor UsageRefresher {
     }
 
     /// User-initiated refresh (host appear, pull-to-refresh, token paste).
-    /// Bypasses `minAge` / lastAttemptAt so a newly pasted token is fetched
-    /// immediately; still honors an unexpired 429 `retryAfterUntil`.
+    /// Bypasses `minAge`, `lastAttemptAt`, and 429 backoff so a newly pasted
+    /// token is fetched immediately. Widget timelines keep the 20-minute
+    /// budget via `refreshAll`.
     public func refreshNow(settings: UsageSettings) async -> UsageSnapshot {
         await refreshAll(settings: settings, minAge: 0)
     }
@@ -94,10 +95,10 @@ public actor UsageRefresher {
         do {
             raw = try tokens.load(kind: kind)
         } catch {
-            return credentialsMissing(prior: prior)
+            return credentialsMissing(prior: prior, current: current)
         }
         guard let raw else {
-            return credentialsMissing(prior: prior)
+            return credentialsMissing(prior: prior, current: current)
         }
         do {
             switch kind {
@@ -106,10 +107,12 @@ public actor UsageRefresher {
             case .grok: _ = try TokenParsing.grok(raw, now: current)
             }
         } catch {
-            return credentialsMissing(prior: prior)
+            return credentialsMissing(prior: prior, current: current)
         }
 
-        if let retryUntil = prior.retryAfterUntil, current < retryUntil {
+        // User-initiated `refreshNow` (minAge 0) also drops a leftover 429
+        // gate so a newly pasted token is fetched immediately.
+        if minAge > 0, let retryUntil = prior.retryAfterUntil, current < retryUntil {
             var slot = prior
             slot.enabled = true
             return slot
@@ -127,7 +130,7 @@ public actor UsageRefresher {
             do {
                 provider = try makeFetcher(kind: kind, raw: raw, current: current)
             } catch {
-                return credentialsMissing(prior: prior)
+                return credentialsMissing(prior: prior, current: current)
             }
         }
 
@@ -147,10 +150,12 @@ public actor UsageRefresher {
         }
     }
 
-    private func credentialsMissing(prior: ProviderSnapshot) -> ProviderSnapshot {
+    private func credentialsMissing(prior: ProviderSnapshot, current: Date) -> ProviderSnapshot {
         var slot = prior
         slot.enabled = true
         slot.lastError = .credentialsMissing
+        slot.lastAttemptAt = current
+        slot.retryAfterUntil = nil
         return slot
     }
 
@@ -161,6 +166,8 @@ public actor UsageRefresher {
         slot.lastAttemptAt = current
         if case .rateLimited(let retryAfter) = error, let retryAfter {
             slot.retryAfterUntil = current.addingTimeInterval(retryAfter)
+        } else {
+            slot.retryAfterUntil = nil
         }
         return slot
     }
