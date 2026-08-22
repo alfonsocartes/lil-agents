@@ -168,11 +168,12 @@ final class SessionStore {
     }
 
     /// Idempotently end a lifecycle, whether the signal came from a CLI
-    /// SessionEnd hook or from the owning process exiting. This also clears a
-    /// manual-dismissal tombstone so a future lifecycle may reuse the id.
+    /// SessionEnd hook or from the owning process exiting. Tombstones the id
+    /// so a late Stop/Notification cannot revive the row; SessionStart still
+    /// clears that tombstone for a new lifecycle.
     func endLifecycle(_ id: String) {
         byID[id] = nil
-        removedAt[id] = nil
+        removedAt[id] = now()
         lastNotified[id] = nil
         rebuild()
     }
@@ -224,12 +225,19 @@ final class SessionStore {
             switch event.notification_type {
             case "permission_prompt", "agent_needs_input":
                 return .waitingApproval
-            case "idle_prompt", "agent_completed":
+            case "idle_prompt", "agent_completed", "task_complete":
                 return .idle
             default:
                 return nil                              // unknown notification: no change
             }
         case "Stop":
+            switch event.reason {
+            case "channel_closed", "shutdown":
+                return nil
+            default:
+                return .idle
+            }
+        case "StopFailure", "StopCancelled":
             return .idle
         default:
             return nil

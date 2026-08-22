@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="assets/lil-agents-icon.png" alt="lil agents — live status overlay for Claude Code and Codex CLI sessions" width="128" />
+  <img src="assets/lil-agents-icon.png" alt="lil agents — live status overlay for Claude Code, Codex CLI, and Grok CLI sessions" width="128" />
 </p>
 
 <h1 align="center">lil agents</h1>
 
-<p align="center">A live status overlay for Claude Code &amp; Codex CLI sessions on macOS.</p>
+<p align="center">A live status overlay for Claude Code, Codex CLI &amp; Grok CLI sessions on macOS.</p>
 
 ---
 
-**Stop alt-tabbing to check if your AI coding agent is done.** `lil agents` (aka **AgentDeck**) is a tiny, native macOS menu-bar app that shows the live status of every [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [OpenAI Codex CLI](https://developers.openai.com/codex/) session in an always-on-top overlay — working, idle, or waiting for you — and lets you jump straight to the terminal pane that needs attention.
+**Stop alt-tabbing to check if your AI coding agent is done.** `lil agents` (aka **AgentDeck**) is a tiny, native macOS menu-bar app that shows the live status of every [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [OpenAI Codex CLI](https://developers.openai.com/codex/), and [Grok CLI](https://x.ai) session in an always-on-top overlay — working, idle, or waiting for you — and lets you jump straight to the terminal pane that needs attention.
 
 > Built for developers running **multiple AI agents in parallel** across terminal tabs and windows. One glance tells you which session is blocked on a permission prompt, which finished its turn, and which is still crunching.
 
@@ -48,15 +48,16 @@ Click any session and it **jumps to the exact terminal pane that owns it** — a
 
 ## Features
 
-- **Real-time agent monitoring** — tracks Claude Code and Codex CLI sessions as they start, work, prompt, and finish.
+- **Real-time agent monitoring** — tracks Claude Code, Codex CLI, and Grok CLI sessions as they start, work, prompt, and finish.
 - **Automatic session cleanup** — removes a session when its CLI process exits (including terminal tab, pane, or window closure) and replaces the old row when `/clear`, `/new`, or another in-process reset starts a new lifecycle. A detached tmux session stays visible while its agent is still alive.
 - **Floating overlay** — a compact, translucent, always-on-top list of live sessions; hover a row to reveal which agent owns it. Toggle it anywhere with a global hotkey (**⌥⌘J**).
-- **Menu bar status icon** — the menu-bar glyph changes color to reflect the most attention-worthy session (red → yellow → green), so you know the state without even opening the overlay.
+- **Menu bar status icon** — the menu-bar glyph changes color to reflect the most attention-worthy session (red → yellow → green), so you know the state without even opening the overlay. When usage tracking is on, weekly percent for each enabled provider sits next to it.
+- **Opt-in usage gauges** — Settings toggles for Claude, Codex, and Grok. Off by default. The menu bar and overlay show **weekly** usage; the dropdown also shows Claude's 5-hour window. Grok's number is the same weekly limit as `/usage` in the TUI.
 - **One-click jump to terminal** — click a session (in the overlay or the menu) to focus the exact pane that owns it. Precise focus for **iTerm2, Terminal.app, WezTerm, and tmux** (matched by controlling TTY / pane id); **Ghostty** gets precise split focus too via its AppleScript API (working-directory match on 1.3.0+, exact TTY match on 1.4.0+/tip), falling back to bringing the app forward on older builds.
 - **Notification Center alerts** — optionally get a banner (and sound) the instant a session goes **🔴 needs-approval** or **🟡 finished-its-turn**. Fires once per transition; tap the alert to jump straight to that pane. Fully configurable in **Settings** (which states, sound, on/off).
 - **Project-aware labels** — each session is labeled by its working-directory name, so you can tell your repos apart at a glance.
 - **Stay awake (lid closed)** — an optional toggle keeps your Mac awake with the lid shut, so long agent runs don't get suspended mid-task.
-- **Zero-config hook install** — one action wires the lifecycle hooks into both CLIs; config files are *merged, never clobbered*, and install is idempotent and self-healing.
+- **Zero-config hook install** — one action wires the lifecycle hooks into the CLIs; config files are *merged, never clobbered* (Grok's hook file is fully owned), and install is idempotent and self-healing.
 - **Private by design** — everything is local. Events are sent over **loopback only** (`127.0.0.1:54173`), never your LAN, never the internet.
 - **Native & lightweight** — pure Swift 6, SwiftUI + AppKit, no Electron, no bundled runtime. Dock-less and unobtrusive (`LSUIElement`).
 
@@ -66,13 +67,14 @@ Click any session and it **jumps to the exact terminal pane that owns it** — a
 
 - **Claude Code** → `~/.claude/settings.json`
 - **Codex CLI** → `~/.codex/hooks.json`
+- **Grok CLI** → `~/.grok/hooks/agentdeck.json`
 
-On each lifecycle event — `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `SubagentStop`, and `SessionEnd` for Claude Code; `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `Stop`, and `SessionEnd` for Codex CLI — a tiny generated forwarder script reads the hook's JSON, tags it with the terminal's TTY and owning CLI PID, and `POST`s it to the app's local listener. The app maps those events to a coarse status (`working` / `idle` / `waitingApproval`) and updates the overlay and menu-bar icon instantly. It fingerprints and watches the owning process so abrupt terminal closure still ends the right session without being confused by macOS reusing a PID.
+On each lifecycle event — `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `SubagentStop`, and `SessionEnd` for Claude Code; `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `Stop`, and `SessionEnd` for Codex CLI; `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `StopFailure`, `StopCancelled`, `SubagentStop`, and `SessionEnd` for Grok CLI — a tiny generated forwarder script reads the hook's JSON, tags it with the terminal's TTY and owning CLI PID, and `POST`s it to the app's local listener. The app maps those events to a coarse status (`working` / `idle` / `waitingApproval`) and updates the overlay and menu-bar icon instantly. It fingerprints and watches the owning process so abrupt terminal closure still ends the right session without being confused by macOS reusing a PID.
 
-The forwarder attributes each event to the CLI process that actually owns it — the nearest ancestor whose command name is the tool, or, for interpreter-backed installs where that name is the runtime rather than the script, the nearest `node`/`bun`/`deno` — and reads the TTY from that process alone. Agents increasingly spawn other agents, and a nested headless run (`codex exec`, `claude -p`, CI) has no pane of its own; it is reported as headless and stays out of the overlay rather than borrowing the parent agent's pane and PID. Turn on **Settings → Sessions → Show background agents** if you want them listed anyway — useful when an agent you *are* waiting on runs outside a terminal, such as an editor-hosted session. If the owner can't be identified at all, the event carries a TTY for the jump feature but claims no PID — an unsubstantiated ownership claim would hand one session's row to another.
+The forwarder attributes each event to the CLI process that actually owns it — the nearest ancestor whose command name is the tool, or, for interpreter-backed installs where that name is the runtime rather than the script, the nearest `node`/`bun`/`deno` — and reads the TTY from that process alone. Agents increasingly spawn other agents, and a nested headless run (`codex exec`, `claude -p`, grok headless, CI) has no pane of its own; it is reported as headless and stays out of the overlay rather than borrowing the parent agent's pane and PID. Turn on **Settings → Sessions → Show background agents** if you want them listed anyway — useful when an agent you *are* waiting on runs outside a terminal, such as an editor-hosted session. If the owner can't be identified at all, the event carries a TTY for the jump feature but claims no PID — an unsubstantiated ownership claim would hand one session's row to another.
 
 ```
-Claude Code / Codex CLI
+Claude Code / Codex CLI / Grok CLI
         │  (lifecycle hook fires)
         ▼
  forward-event.sh  ──POST──▶  127.0.0.1:54173/event  ──▶  lil agents overlay + menu bar
@@ -86,7 +88,7 @@ Existing hooks from other tools and plugins are preserved — the installer only
 - **macOS 26 or later**
 - **Swift 6.2 toolchain** (Xcode 26+) to build from source
 - A supported terminal for click-to-jump — **[iTerm2](https://iterm2.com/)**, **Terminal.app**, **[WezTerm](https://wezterm.org/)**, or **[tmux](https://github.com/tmux/tmux)** for precise pane focus (**[Ghostty](https://ghostty.org/)** 1.3.0+ also gets precise split focus via its AppleScript API; older Ghostty falls back to app-activate). Sessions are still *tracked* in any terminal — this only affects jump-to-pane.
-- **Claude Code** and/or **Codex CLI** installed — whichever agents you want to monitor
+- **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)**, **[Codex CLI](https://developers.openai.com/codex/)**, and/or **[Grok CLI](https://x.ai)** installed — whichever agents you want to monitor
 
 ## Download & Install
 
@@ -129,7 +131,7 @@ Run the test suite with:
 swift test
 ```
 
-On first launch, use the app's install action to wire up the CLI hooks, then start (or restart) a Claude Code or Codex session — it should appear in the overlay immediately.
+On first launch, use the app's install action to wire up the CLI hooks, then start (or restart) a Claude Code, Codex, or Grok session — it should appear in the overlay immediately.
 
 > **First-run permissions:** macOS will show a one-time **Automation** prompt so the app can control your terminal when you jump to a pane. Local source builds are ad-hoc code-signed (release downloads are Developer ID signed and notarized), which is enough for this grant to persist across launches.
 
@@ -140,6 +142,7 @@ On first launch, use the app's install action to wire up the CLI hooks, then sta
 | Show / hide the overlay | Global hotkey **⌥⌘J**, or the menu-bar menu |
 | Jump to a session's terminal | Click the session row (overlay) or menu item, or tap its notification |
 | Configure notifications | Menu bar → **Settings…** (**⌘,**) |
+| Show weekly usage | Settings → **AI usage** (Claude / Codex / Grok, off by default) |
 | Keep Mac awake with lid closed | Menu bar → **Stay awake (lid closed)** |
 | Quit | Menu bar → **Quit lil agents** (**⌘Q**) |
 
@@ -153,9 +156,10 @@ Status at a glance:
 
 ## Privacy & security
 
-- **Loopback only.** The listener binds to `127.0.0.1` and is never exposed to the network.
-- **No telemetry.** Nothing leaves your machine. There is no analytics, no account, no cloud.
-- **Non-destructive config edits.** Existing hooks are backed up and merged; uninstall removes only what `lil agents` added.
+- **Loopback only.** Session events stay on `127.0.0.1`. The listener is never exposed to the network.
+- **No product telemetry.** There is no analytics, no account, no cloud of ours.
+- **Usage is opt-in.** Session tracking never leaves the machine. If you turn on **Settings → AI usage**, the app reads that CLI's local sign-in and asks Anthropic, OpenAI, or xAI for your current usage. Off by default.
+- **Non-destructive config edits.** Existing hooks are backed up and merged; uninstall removes only what `lil agents` added (`~/.grok/hooks/agentdeck.json` is deleted whole because that file is ours).
 
 ## Uninstalling
 
@@ -163,7 +167,7 @@ Menu bar → **Settings…** (**⌘,**) → **Uninstall lil agents…**
 
 This removes everything `lil agents` added to your system:
 
-- Its hook entries from `~/.claude/settings.json` and `~/.codex/hooks.json` (existing entries from other tools are left untouched)
+- Its hook entries from `~/.claude/settings.json` and `~/.codex/hooks.json` (existing entries from other tools are left untouched), and `~/.grok/hooks/agentdeck.json`
 - The generated forwarder scripts
 - The **stay awake (lid closed)** `sudoers` rule, if it was ever enabled
 - Its other support files (logs, generated config, etc.)
@@ -208,4 +212,4 @@ Released under the [MIT License](LICENSE). © 2026 Wandity Ltd.
 
 ---
 
-<sub>**Keywords:** Claude Code monitor · Codex CLI status · AI coding agent dashboard · macOS menu bar app · terminal session overlay · parallel AI agents · iTerm2 jump-to-pane · Claude Code hooks · Codex hooks · agent session tracker · SwiftUI menu bar app.</sub>
+<sub>**Keywords:** Claude Code monitor · Codex CLI status · Grok CLI status · Grok usage · AI coding agent dashboard · macOS menu bar app · terminal session overlay · parallel AI agents · iTerm2 jump-to-pane · Claude Code hooks · Codex hooks · Grok hooks · agent session tracker · SwiftUI menu bar app.</sub>

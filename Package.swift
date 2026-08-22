@@ -15,6 +15,9 @@ let package = Package(
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Sources/AgentDeck",
+            resources: [
+                .process("Resources"),
+            ],
             linkerSettings: [
                 // Sparkle.framework ships as a binary XCFramework and is embedded into
                 // Contents/Frameworks/ by scripts/build-app.sh. This rpath lets the

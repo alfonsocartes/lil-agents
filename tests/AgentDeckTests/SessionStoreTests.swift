@@ -45,6 +45,14 @@ import Testing
         #expect(store.sessions.isEmpty)
     }
 
+    @Test func sessionEndThenStopDoesNotRevive() {
+        let store = SessionStore()
+        store.apply(makeEvent("SessionStart"))
+        store.apply(makeEvent("SessionEnd"))
+        store.apply(makeEvent("Stop"))
+        #expect(store.sessions.isEmpty)
+    }
+
     @Test func removeHidesSessionUntilThatSessionEnds() {
         let store = SessionStore()
         store.apply(makeEvent("SessionStart"))
@@ -95,6 +103,44 @@ import Testing
         store.apply(makeEvent("SessionStart"))       // working
         store.apply(makeEvent("SubagentStop"))
         #expect(status(store) == .working)           // unchanged, not idle
+    }
+
+    @Test func grokStopFailureAndStopCancelledGoIdle() {
+        let store = SessionStore()
+        store.apply(makeEvent("SessionStart", id: "fail", tool: "grok"))
+        store.apply(makeEvent("StopFailure", id: "fail", tool: "grok"))
+        #expect(status(store, "fail") == .idle)
+
+        store.apply(makeEvent("SessionStart", id: "cancel", tool: "grok"))
+        store.apply(makeEvent("StopCancelled", id: "cancel", tool: "grok"))
+        #expect(status(store, "cancel") == .idle)
+    }
+
+    @Test func notificationTaskCompleteGoesIdle() {
+        let store = SessionStore()
+        store.apply(makeEvent("SessionStart", tool: "grok"))
+        store.apply(makeEvent("Notification", tool: "grok", notification: "task_complete"))
+        #expect(status(store) == .idle)
+    }
+
+    @Test func grokToolDisplayName() {
+        #expect(AgentTool(rawValue: "grok")?.display == "Grok")
+    }
+
+    @Test func vendorLogoImagesLoad() {
+        #expect(AgentTool.claude.logoImage != nil)
+        #expect(AgentTool.codex.logoImage != nil)
+        #expect(AgentTool.grok.logoImage != nil)
+        #expect(AgentTool.unknown.logoImage == nil)
+    }
+
+    @Test func grokSessionEndStopDoesNotGoIdle() {
+        let store = SessionStore()
+        store.apply(makeEvent("SessionStart", tool: "grok"))
+        store.apply(makeEvent("Stop", tool: "grok", reason: "channel_closed"))
+        #expect(status(store) == .working)
+        store.apply(makeEvent("Stop", tool: "grok", reason: "shutdown"))
+        #expect(status(store) == .working)
     }
 }
 
@@ -149,8 +195,10 @@ import Testing
 
         store.apply(makeEvent("SessionEnd"))         // removes + clears lastNotified
 
-        // A brand-new session reusing the same id, arriving already idle, must
-        // be able to notify again.
+        // A brand-new session reusing the same id must be able to notify
+        // again. SessionStart is what opens the new lifecycle; a late Stop
+        // from the ended one must not.
+        store.apply(makeEvent("SessionStart"))
         store.apply(makeEvent("Stop"))
         #expect(spy.count == 2)
     }

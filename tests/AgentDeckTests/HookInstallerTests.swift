@@ -118,11 +118,32 @@ import Testing
         let tty: String        // "??" for no controlling terminal
     }
 
+    private func grokHooksURL(_ home: URL) -> URL {
+        home.appendingPathComponent(".grok/hooks/agentdeck.json")
+    }
+
+    /// Every command string wired for `event` in the temp home's Grok hooks.
+    private func grokCommands(_ home: URL, event: String) -> [String] {
+        grokHandlers(home, event: event).compactMap { $0["command"] as? String }
+    }
+
+    private func grokHandlers(_ home: URL, event: String) -> [[String: Any]] {
+        guard let data = try? Data(contentsOf: grokHooksURL(home)),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hooks = root["hooks"] as? [String: Any],
+              let groups = hooks[event] as? [[String: Any]]
+        else { return [] }
+        return groups.flatMap { group in
+            group["hooks"] as? [[String: Any]] ?? []
+        }
+    }
+
     private func runGeneratedForwarder(
         tool: String,
         event: String,
         tree: [Int32: FakeProcess],
-        stdin: [String: Any] = ["session_id": "s1", "cwd": "/private/tmp"]
+        stdin: [String: Any] = ["session_id": "s1", "cwd": "/private/tmp"],
+        extraEnv: [String: String] = [:]
     ) throws -> [String: Any] {
         let dir = makeTempDir()
         defer { cleanup(dir) }
@@ -181,8 +202,11 @@ import Testing
         environment["FAKE_PS_TREE"] = table.path
         environment["FAKE_CURL_CAPTURE"] = capture.path
         // Terminal detection must not key off the harness's own environment.
-        for key in ["TMUX", "TMUX_PANE", "TERM_PROGRAM", "WEZTERM_PANE", "GHOSTTY_RESOURCES_DIR"] {
+        for key in ["TMUX", "TMUX_PANE", "TERM_PROGRAM", "WEZTERM_PANE", "GHOSTTY_RESOURCES_DIR", "GROK_HOOK_EVENT"] {
             environment.removeValue(forKey: key)
+        }
+        for (key, value) in extraEnv {
+            environment[key] = value
         }
         process.environment = environment
 
@@ -516,6 +540,138 @@ import Testing
 
             let remaining = claudeCommands(home, event: "SomeFutureEvent")
             #expect(remaining == [foreign])
+        }
+    }
+
+    @Test func grokInstallWritesOwnedHookFile() throws {
+        try withTempHome { home in
+            try HookInstaller.install(port: AgentDeck.port)
+            try HookInstaller.install(port: AgentDeck.port)
+
+            let events = [
+                "SessionStart", "UserPromptSubmit", "PreToolUse", "Notification",
+                "Stop", "StopFailure", "StopCancelled", "SessionEnd", "SubagentStop",
+            ]
+            for event in events {
+                let handlers = grokHandlers(home, event: event)
+                #expect(handlers.count == 1)
+                #expect(handlers.first?["command"] as? String == "'\(scriptPath)' grok \(event)")
+                #expect(handlers.first?["timeout"] as? Int == 10)
+            }
+        }
+    }
+
+    @Test func grokUninstallDeletesOnlyOurFile() throws {
+        try withTempHome { home in
+            let sibling = home.appendingPathComponent(".grok/hooks/other.json")
+            try FileManager.default.createDirectory(
+                at: sibling.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: sibling)
+
+            try HookInstaller.install(port: AgentDeck.port)
+            #expect(FileManager.default.fileExists(atPath: grokHooksURL(home).path))
+
+            try HookInstaller.uninstall()
+            #expect(!FileManager.default.fileExists(atPath: grokHooksURL(home).path))
+            #expect(FileManager.default.fileExists(atPath: sibling.path))
+        }
+    }
+
+    @Test func grokStatusTracksInstallAndUninstall() throws {
+        try withTempHome { _ in
+            #expect(!HookInstaller.status().grok)
+            try HookInstaller.install(port: AgentDeck.port)
+            #expect(HookInstaller.status().grok)
+            try HookInstaller.uninstall()
+            #expect(!HookInstaller.status().grok)
+        }
+    }
+
+    @Test func mergerMapsGrokCamelCaseWithoutOverwritingSnakeCase() throws {
+        try withTempHome { _ in
+            try HookInstaller.install(port: AgentDeck.port)
+
+            let mapped = try runGeneratedMerger(
+                input: ["sessionId": "uuid-1", "notificationType": "permission_prompt"],
+                discoveredPID: nil
+            )
+            #expect(mapped["session_id"] as? String == "uuid-1")
+            #expect(mapped["notification_type"] as? String == "permission_prompt")
+
+            let preserved = try runGeneratedMerger(
+                input: [
+                    "sessionId": "camel",
+                    "session_id": "snake",
+                    "notificationType": "permission_prompt",
+                    "notification_type": "idle_prompt",
+                ],
+                discoveredPID: nil
+            )
+            #expect(preserved["session_id"] as? String == "snake")
+            #expect(preserved["notification_type"] as? String == "idle_prompt")
+        }
+    }
+
+    @Test func forwarderResolvesAnInteractiveGrokToItsOwnPane() throws {
+        let tree: [Int32: FakeProcess] = [
+            ProcessInfo.processInfo.processIdentifier:
+                FakeProcess(comm: "sh", ppid: 9703, tty: "??"),
+            9703: FakeProcess(comm: "/usr/local/bin/grok", ppid: 1, tty: "ttys003"),
+        ]
+
+        try withTempHome { _ in
+            try HookInstaller.install(port: AgentDeck.port)
+
+            let posted = try runGeneratedForwarder(tool: "grok", event: "Stop", tree: tree)
+
+            #expect(posted["agent_pid"] as? Int == 9703)
+            #expect(posted["tty"] as? String == "/dev/ttys003")
+            #expect(posted["headless"] == nil)
+        }
+    }
+
+    @Test func forwarderRetagsClaudeCompatDualFireAsGrok() throws {
+        let tree: [Int32: FakeProcess] = [
+            ProcessInfo.processInfo.processIdentifier:
+                FakeProcess(comm: "sh", ppid: 9801, tty: "??"),
+            9801: FakeProcess(comm: "/usr/local/bin/grok", ppid: 9802, tty: "ttys010"),
+            9802: FakeProcess(comm: "/usr/local/bin/claude", ppid: 1, tty: "ttys003"),
+        ]
+
+        try withTempHome { _ in
+            try HookInstaller.install(port: AgentDeck.port)
+
+            let posted = try runGeneratedForwarder(
+                tool: "claude",
+                event: "Stop",
+                tree: tree,
+                extraEnv: ["GROK_HOOK_EVENT": "stop"]
+            )
+
+            #expect(posted["tool"] as? String == "grok")
+            #expect(posted["agent_pid"] as? Int == 9801)
+            #expect(posted["tty"] as? String == "/dev/ttys010")
+        }
+    }
+
+    @Test func forwarderMapsGrokCamelCaseSessionId() throws {
+        let tree: [Int32: FakeProcess] = [
+            ProcessInfo.processInfo.processIdentifier:
+                FakeProcess(comm: "sh", ppid: 9903, tty: "??"),
+            9903: FakeProcess(comm: "/usr/local/bin/grok", ppid: 1, tty: "ttys003"),
+        ]
+
+        try withTempHome { _ in
+            try HookInstaller.install(port: AgentDeck.port)
+
+            let posted = try runGeneratedForwarder(
+                tool: "grok",
+                event: "Stop",
+                tree: tree,
+                stdin: ["sessionId": "uuid-1"]
+            )
+
+            #expect(posted["session_id"] as? String == "uuid-1")
         }
     }
 }

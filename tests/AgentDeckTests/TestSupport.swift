@@ -29,6 +29,7 @@ func makeEvent(
     id: String = "s1",
     tool: String = "claude",
     notification: String? = nil,
+    reason: String? = nil,
     cwd: String? = nil,
     tty: String? = nil,
     agentPID: Int32? = nil,
@@ -42,6 +43,7 @@ func makeEvent(
 ) -> HookEvent {
     var dict: [String: Any] = ["tool": tool, "event": event, "session_id": id]
     if let notification { dict["notification_type"] = notification }
+    if let reason { dict["reason"] = reason }
     if let cwd { dict["cwd"] = cwd }
     if let tty { dict["tty"] = tty }
     if let agentPID { dict["agent_pid"] = agentPID }

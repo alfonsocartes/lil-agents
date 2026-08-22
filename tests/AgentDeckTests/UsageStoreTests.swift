@@ -53,15 +53,16 @@ private let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)
 /// KNOWN state — not one carrying over whatever a previous run left behind —
 /// and the suite writes no plist to disk as a side effect.
 ///
-/// Seeding the two usage keys *before* constructing matters: `AppSettings`
+/// Seeding the usage keys *before* constructing matters: `AppSettings`
 /// reads them in `init`, and its `didSet` writers are what persist later
 /// changes, so a value set afterwards wouldn't be reflected in the instance
 /// under test.
 @MainActor
-private func makeSettings(claudeEnabled: Bool = false, codexEnabled: Bool = false) -> AppSettings {
+private func makeSettings(claudeEnabled: Bool = false, codexEnabled: Bool = false, grokEnabled: Bool = false) -> AppSettings {
     let defaults = InMemoryDefaults()
     defaults.set(claudeEnabled, forKey: "usage.claudeEnabled")
     defaults.set(codexEnabled, forKey: "usage.codexEnabled")
+    defaults.set(grokEnabled, forKey: "usage.grokEnabled")
     return AppSettings(defaults: defaults)
 }
 
@@ -104,16 +105,17 @@ private func isLoading(_ state: ProviderUsageState) -> Bool {
 @Suite struct UsageStoreTests {
     @Test func startsDisabledWhenBothTogglesAreOff() {
         let settings = makeSettings()
-        let store = UsageStore(settings: settings, claudeProvider: StubUsageProvider([]), codexProvider: StubUsageProvider([]))
+        let store = UsageStore(settings: settings, claudeProvider: StubUsageProvider([]), codexProvider: StubUsageProvider([]), grokProvider: StubUsageProvider([]))
         #expect(store.claude == .disabled)
         #expect(store.codex == .disabled)
+        #expect(store.grok == .disabled)
     }
 
     @Test func enablingAfterConstructionTransitionsToAvailable() async {
         let settings = makeSettings()
         let usage = ProviderUsage(session: UsageWindow(percent: 40, resetsAt: nil), weekly: nil, fetchedAt: fixedNow)
         let provider = StubUsageProvider([.success(usage)])
-        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]))
+        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]), grokProvider: StubUsageProvider([]))
         #expect(store.claude == .disabled)
 
         settings.claudeUsageEnabled = true
@@ -121,11 +123,23 @@ private func isLoading(_ state: ProviderUsageState) -> Bool {
         #expect(store.claude == .available(usage))
     }
 
+    @Test func enablingGrokAfterConstructionTransitionsToAvailable() async {
+        let settings = makeSettings()
+        let usage = ProviderUsage(session: nil, weekly: UsageWindow(percent: 7, resetsAt: nil), fetchedAt: fixedNow)
+        let provider = StubUsageProvider([.success(usage)])
+        let store = UsageStore(settings: settings, claudeProvider: StubUsageProvider([]), codexProvider: StubUsageProvider([]), grokProvider: provider)
+        #expect(store.grok == .disabled)
+
+        settings.grokUsageEnabled = true
+        await waitUntil { store.grok == .available(usage) }
+        #expect(store.grok == .available(usage))
+    }
+
     @Test func disablingAfterAvailableReturnsToDisabled() async {
         let settings = makeSettings(claudeEnabled: true)
         let usage = ProviderUsage(session: nil, weekly: nil, fetchedAt: fixedNow)
         let provider = StubUsageProvider([.success(usage)])
-        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]))
+        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]), grokProvider: StubUsageProvider([]))
 
         await store.refresh()
         #expect(store.claude == .available(usage))
@@ -139,7 +153,7 @@ private func isLoading(_ state: ProviderUsageState) -> Bool {
         let settings = makeSettings(claudeEnabled: true)
         let usage = ProviderUsage(session: UsageWindow(percent: 40, resetsAt: nil), weekly: nil, fetchedAt: fixedNow)
         let provider = StubUsageProvider([.success(usage), .failure(.network("boom"))])
-        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]))
+        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]), grokProvider: StubUsageProvider([]))
 
         await store.refresh()
         #expect(store.claude == .available(usage))
@@ -156,7 +170,7 @@ private func isLoading(_ state: ProviderUsageState) -> Bool {
     @Test func failureFirstBecomesUnavailable() async {
         let settings = makeSettings(claudeEnabled: true)
         let provider = StubUsageProvider([.failure(.credentialsMissing)])
-        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]))
+        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]), grokProvider: StubUsageProvider([]))
 
         await store.refresh()
         #expect(store.claude == .unavailable(.credentialsMissing))
@@ -170,7 +184,7 @@ private func isLoading(_ state: ProviderUsageState) -> Bool {
             .failure(.network("down")),
             .success(ProviderUsage(session: nil, weekly: nil, fetchedAt: fixedNow)),
         ])
-        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]))
+        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]), grokProvider: StubUsageProvider([]))
         store.now = { clock }
 
         settings.claudeUsageEnabled = true
@@ -211,7 +225,7 @@ private func isLoading(_ state: ProviderUsageState) -> Bool {
             .failure(.rateLimited(retryAfter: 120)),
             .success(ProviderUsage(session: nil, weekly: nil, fetchedAt: fixedNow)),
         ])
-        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]))
+        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]), grokProvider: StubUsageProvider([]))
         store.now = { clock }
 
         settings.claudeUsageEnabled = true
@@ -238,7 +252,7 @@ private func isLoading(_ state: ProviderUsageState) -> Bool {
         let settings = makeSettings(claudeEnabled: true)
         let usage = ProviderUsage(session: nil, weekly: nil, fetchedAt: fixedNow)
         let provider = StubUsageProvider([.success(usage)])
-        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]))
+        let store = UsageStore(settings: settings, claudeProvider: provider, codexProvider: StubUsageProvider([]), grokProvider: StubUsageProvider([]))
 
         async let first: Void = store.refresh()
         async let second: Void = store.refresh()

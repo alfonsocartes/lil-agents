@@ -3,7 +3,7 @@ import AppKit
 /// Namespace for building the status-item label `NSImage`: the attention icon
 /// plus, when usage tracking is enabled, an iStat-Menus-style usage block —
 /// one or two rows, each a small SF Symbol glyph followed by a right-aligned
-/// percentage (Claude 5-hour % on top, Codex weekly % on the bottom). No
+/// percentage (weekly % per enabled provider). No
 /// gauge here: at menu bar sizes the number IS the gauge — user feedback
 /// confirmed the micro-bar cost width without adding read speed, and the
 /// reclaimed points went into bigger, heavier digits instead (the iStat
@@ -30,8 +30,10 @@ import AppKit
 enum UsageMenuBarIcon {
     /// One row of the usage block: a glyph plus its percentage text.
     struct Row: Equatable {
-        /// SF Symbol name drawn at the row's leading edge.
+        /// SF Symbol name drawn at the row's leading edge when `logoImage` is nil.
         let symbolName: String
+        /// Vendor logomark, preferred over `symbolName` when present.
+        var logoImage: NSImage? = nil
         /// Right-aligned label, e.g. "62%" or "--". Kept as a separate field
         /// (rather than derived from `percent`) so `UsageFormatting` stays
         /// the single source of the "62%"/"--" phrasing.
@@ -42,6 +44,14 @@ enum UsageMenuBarIcon {
         /// Dimmed rows (stale/unavailable data) render at reduced alpha —
         /// both the glyph and the text — instead of disappearing entirely.
         let dimmed: Bool
+
+        static func == (lhs: Row, rhs: Row) -> Bool {
+            lhs.symbolName == rhs.symbolName
+                && lhs.text == rhs.text
+                && lhs.percent == rhs.percent
+                && lhs.dimmed == rhs.dimmed
+                && (lhs.logoImage == nil) == (rhs.logoImage == nil)
+        }
     }
 
     /// Total height of the usage block in EVERY mode: two stacked 10.5pt
@@ -284,7 +294,15 @@ enum UsageMenuBarIcon {
                 weight: .bold
             )
             .applying(NSImage.SymbolConfiguration(paletteColors: [rowColor]))
-            if let glyph = NSImage(systemSymbolName: row.symbolName, accessibilityDescription: nil)?
+            if let logo = row.logoImage {
+                // Draw into this 2x bitmap directly. An offscreen tint at
+                // `glyphBox` point size is 1x and looks soft here.
+                NSGraphicsContext.saveGraphicsState()
+                rowColor.set()
+                logo.draw(in: glyphBox, from: .zero, operation: .sourceOver, fraction: 1)
+                glyphBox.fill(using: .sourceAtop)
+                NSGraphicsContext.restoreGraphicsState()
+            } else if let glyph = NSImage(systemSymbolName: row.symbolName, accessibilityDescription: nil)?
                 .withSymbolConfiguration(symbolConfig) {
                 glyph.isTemplate = false
                 glyph.draw(in: glyphBox, from: .zero, operation: .sourceOver, fraction: 1)

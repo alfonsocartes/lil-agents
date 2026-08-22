@@ -49,6 +49,11 @@ final class SessionLifecycleCoordinator {
     private var sessionIDByPane: [PaneOwnerKey: String] = [:]
     private var observationByProcess: [ProcessOwnerKey: any ProcessObservation] = [:]
     private var pruneTimer: Timer?
+    /// Ids `terminate` has ended. Grok fires an observe-only Stop after
+    /// SessionEnd; dual-fire plus unordered main-actor hops can deliver it
+    /// after `/new` already rebound the process. Dropped on `receive` so it
+    /// cannot `apply` or `reconcileOwnership`.
+    private var endedAt: [String: Date] = [:]
 
     /// Test seam shared conceptually with SessionStore.now. Production uses
     /// wall time; tests advance both clocks deterministically.
@@ -98,6 +103,10 @@ final class SessionLifecycleCoordinator {
         let isBackground = event.headless == true
         if isBackground, !showsBackgroundSessions() { return }
 
+        if event.event != "SessionStart", endedAt[id] != nil {
+            return
+        }
+
         if event.event == "SessionEnd" {
             receiveSessionEnd(event, id: id, processLookup: processLookup)
             return
@@ -135,6 +144,8 @@ final class SessionLifecycleCoordinator {
                 }(),
                 isBackground: isBackground
             )
+            // `/clear` terminates this same id before apply; it is live again.
+            endedAt[id] = nil
         } else {
             store.apply(event)
             reconcileOwnership(
@@ -362,6 +373,8 @@ final class SessionLifecycleCoordinator {
         // rows we cannot verify fall back to the silence horizon.
         let live = Set(lifecycleByID.values.lazy.filter { $0.process != nil }.map(\.id))
         store.pruneStale(protecting: live)
+        let endedCutoff = now().addingTimeInterval(-AgentDeck.staleAfter * 24)
+        endedAt = endedAt.filter { $0.value >= endedCutoff }
         let cutoff = now().addingTimeInterval(-AgentDeck.staleAfter)
         let staleIDs = lifecycleByID.values.compactMap { lifecycle in
             lifecycle.process == nil && lifecycle.lastSeen < cutoff
@@ -379,6 +392,7 @@ final class SessionLifecycleCoordinator {
         sessionID id: String,
         preserving preservedOwner: ProcessOwnerKey? = nil
     ) {
+        endedAt[id] = now()
         guard let lifecycle = lifecycleByID.removeValue(forKey: id) else {
             store.endLifecycle(id)
             return

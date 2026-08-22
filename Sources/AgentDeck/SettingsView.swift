@@ -137,18 +137,18 @@ struct SettingsView: View {
 
             Toggle("Show background agents", isOn: $settings.showBackgroundSessions)
 
-            Text("Agents with no terminal of their own — scripted runs like `codex exec` and `claude -p`, CI jobs, and editor-hosted sessions. They're hidden by default because there's no pane to jump to, and one agent spawning others can bury the sessions you're actually watching.")
+            Text("Agents with no terminal of their own — scripted runs like `codex exec`, `claude -p`, and grok headless, CI jobs, and editor-hosted sessions. They're hidden by default because there's no pane to jump to, and one agent spawning others can bury the sessions you're actually watching.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    /// Opt-in toggles for the two usage-tracking providers (default off —
-    /// see `AppSettings.claudeUsageEnabled`/`codexUsageEnabled`). Both are
-    /// read-only against undocumented endpoints: enabling one starts polling
-    /// that provider's CLI credentials and its own vendor's servers, nothing
-    /// else.
+    /// Opt-in toggles for the usage-tracking providers (default off —
+    /// see `AppSettings.claudeUsageEnabled`/`codexUsageEnabled`/`grokUsageEnabled`).
+    /// Each is read-only against undocumented endpoints: enabling one starts
+    /// polling that provider's CLI credentials and its own vendor's servers,
+    /// nothing else.
     private var usageSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("AI usage")
@@ -156,8 +156,9 @@ struct SettingsView: View {
 
             Toggle("Show Claude usage", isOn: $settings.claudeUsageEnabled)
             Toggle("Show Codex usage", isOn: $settings.codexUsageEnabled)
+            Toggle("Show Grok usage", isOn: $settings.grokUsageEnabled)
 
-            Text("Reads the CLI's local sign-in and contacts Anthropic/OpenAI's servers for your current usage. Claude's credentials are read via macOS's built-in `security` tool, so no permission prompt appears.")
+            Text("Reads the CLI's local sign-in and contacts Anthropic/OpenAI/xAI's servers for your current usage. Claude's credentials are read via macOS's built-in `security` tool, so no permission prompt appears.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

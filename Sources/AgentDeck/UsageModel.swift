@@ -57,7 +57,7 @@ enum UsageFetchError: Error, Equatable {
 /// directly rather than reconstructing from raw fetch results.
 enum ProviderUsageState: Equatable {
     /// The user hasn't opted this provider in (Settings toggle off). The
-    /// initial state for both providers in a fresh `UsageStore`.
+    /// initial state for every provider in a fresh `UsageStore`.
     case disabled
     /// A fetch is in flight and there's no prior data to show meanwhile.
     case loading

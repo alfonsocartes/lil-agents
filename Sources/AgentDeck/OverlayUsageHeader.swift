@@ -3,10 +3,12 @@ import SwiftUI
 /// The overlay's usage header: ONE 26pt line above the session list, shared
 /// by every enabled provider. Each provider renders a segment — glyph,
 /// capacity gauge, percent — and the segments split the row's full width
-/// equally: two providers get half each, a single provider stretches across
-/// the whole row (no ghost space reserved for the disabled one). Claude
-/// shows its 5-hour window, Codex its weekly — the user's explicit choice of
-/// window per provider; see UsageModel.swift and the feature plan. Lives
+/// equally (`maxWidth: .infinity`): three providers split the 180pt row
+/// in thirds, two get half each, a single provider stretches across the
+/// whole row (no ghost space reserved for the disabled one). Claude shows
+/// its 5-hour window, Codex its weekly, Grok its billing period (mapped onto
+/// `weekly`) — the user's explicit choice of window per provider; see
+/// UsageModel.swift and the feature plan. Lives
 /// inside the overlay's single glass sheet (OverlayView.swift): plain fills
 /// only here, never a second `.glassEffect` — glass-on-glass is explicitly
 /// discouraged.
@@ -31,29 +33,36 @@ import SwiftUI
 ///   >= 75%, red >= 90%) on a gauge fill and its percent — the one thing
 ///   worth breaking the monochrome for.
 ///
-/// Hidden entirely when both providers are `.disabled` (the default, opt-in
-/// Settings toggles are off).
+/// Hidden entirely when all three providers are `.disabled` (the default,
+/// opt-in Settings toggles are off).
 struct OverlayUsageHeader: View {
     let usage: UsageStore
 
     var body: some View {
-        if usage.claude == .disabled && usage.codex == .disabled {
+        if usage.claude == .disabled && usage.codex == .disabled && usage.grok == .disabled {
             EmptyView()
         } else {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     if usage.claude != .disabled {
                         segment(
-                            symbolName: AgentTool.claude.symbol,
+                            tool: .claude,
                             percent: usage.claude.usage?.session?.percent,
                             dimmed: usage.claude.isDimmed
                         )
                     }
                     if usage.codex != .disabled {
                         segment(
-                            symbolName: AgentTool.codex.symbol,
+                            tool: .codex,
                             percent: usage.codex.usage?.weekly?.percent,
                             dimmed: usage.codex.isDimmed
+                        )
+                    }
+                    if usage.grok != .disabled {
+                        segment(
+                            tool: .grok,
+                            percent: usage.grok.usage?.weekly?.percent,
+                            dimmed: usage.grok.isDimmed
                         )
                     }
                 }
@@ -85,10 +94,10 @@ struct OverlayUsageHeader: View {
     /// number (and gauge fill) to glance at. A nil percent renders "--"
     /// beside a track-only gauge: full geometry, no reflow when data
     /// arrives.
-    private func segment(symbolName: String, percent: Double?, dimmed: Bool) -> some View {
+    private func segment(tool: AgentTool, percent: Double?, dimmed: Bool) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: symbolName)
-                .frame(width: 12, alignment: .center)
+            AgentToolIcon(tool: tool)
+                .frame(width: 12, height: 12, alignment: .center)
             UsageGauge(percent: percent)
                 .frame(height: 3)
             Text(UsageFormatting.percentLabel(percent))

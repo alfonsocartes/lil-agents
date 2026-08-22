@@ -1,13 +1,14 @@
 import Foundation
 import Observation
 
-/// Identifies which of the store's two provider slots an internal operation
+/// Identifies which of the store's three provider slots an internal operation
 /// is about. `UsageProviding` itself carries no such identity (see
 /// UsageProvider.swift) — this is the store-private key used to index the
 /// per-provider task/throttle/gate maps below.
 private enum UsageProviderKind: Hashable {
     case claude
     case codex
+    case grok
 }
 
 /// Holds each provider's usage lifecycle and drives polling. Mirrors
@@ -21,6 +22,7 @@ private enum UsageProviderKind: Hashable {
 final class UsageStore {
     private(set) var claude: ProviderUsageState = .disabled
     private(set) var codex: ProviderUsageState = .disabled
+    private(set) var grok: ProviderUsageState = .disabled
 
     /// Test seam: the store's clock — mirrors `SessionStore.now`. Production
     /// default (`Date()`) leaves behavior unchanged; tests set this to
@@ -31,6 +33,7 @@ final class UsageStore {
     private let settings: AppSettings
     private let claudeProvider: any UsageProviding
     private let codexProvider: any UsageProviding
+    private let grokProvider: any UsageProviding
 
     /// In-flight fetch per provider. `refresh()`/`refreshIfStale()` both
     /// route through `refresh(_:)` below, which checks this before starting
@@ -65,25 +68,28 @@ final class UsageStore {
     init(
         settings: AppSettings,
         claudeProvider: any UsageProviding = ClaudeUsageFetcher(),
-        codexProvider: any UsageProviding = CodexUsageFetcher()
+        codexProvider: any UsageProviding = CodexUsageFetcher(),
+        grokProvider: any UsageProviding = GrokUsageFetcher()
     ) {
         self.settings = settings
         self.claudeProvider = claudeProvider
         self.codexProvider = codexProvider
+        self.grokProvider = grokProvider
         applyEnabledState()
         armSettingsObservation()
     }
 
     // MARK: - Public API
 
-    /// Refreshes both enabled providers and awaits their completion — tests
-    /// can `await store.refresh()` and then assert on `claude`/`codex`
+    /// Refreshes every enabled provider and awaits their completion — tests
+    /// can `await store.refresh()` and then assert on `claude`/`codex`/`grok`
     /// deterministically, rather than polling. Disabled providers are
     /// no-ops.
     func refresh() async {
         async let claudeDone: Void = refresh(.claude)
         async let codexDone: Void = refresh(.codex)
-        _ = await (claudeDone, codexDone)
+        async let grokDone: Void = refresh(.grok)
+        _ = await (claudeDone, codexDone, grokDone)
     }
 
     /// Fire-and-forget refresh, gated per provider on `lastAttemptAt` (so a
@@ -93,7 +99,7 @@ final class UsageStore {
     /// would otherwise allow a retry sooner). Disabled providers are
     /// skipped entirely — never even recorded in `lastAttemptAt`.
     func refreshIfStale(minAge: TimeInterval = 60) {
-        for kind in [UsageProviderKind.claude, .codex] {
+        for kind in [UsageProviderKind.claude, .codex, .grok] {
             guard isEnabled(kind) else { continue }
             let current = now()
             if let retryUntil = retryAfterUntil[kind], current < retryUntil { continue }
@@ -170,7 +176,7 @@ final class UsageStore {
 
     // MARK: - Enabled-state / timer
 
-    /// Recomputes both providers' `.disabled`/`.loading` state from the
+    /// Recomputes every provider's `.disabled`/`.loading` state from the
     /// current settings, starts/stops each provider's fetch accordingly, and
     /// starts/stops the poll timer. Called once from `init` (so a provider
     /// already enabled at launch starts fetching immediately) and again on
@@ -178,6 +184,7 @@ final class UsageStore {
     private func applyEnabledState() {
         updateProviderState(.claude, enabled: settings.claudeUsageEnabled)
         updateProviderState(.codex, enabled: settings.codexUsageEnabled)
+        updateProviderState(.grok, enabled: settings.grokUsageEnabled)
         updateTimer()
     }
 
@@ -208,7 +215,7 @@ final class UsageStore {
     /// while at least one provider is enabled, so a fully-disabled
     /// `UsageStore` makes zero network calls, ever.
     private func updateTimer() {
-        let shouldRun = settings.claudeUsageEnabled || settings.codexUsageEnabled
+        let shouldRun = settings.claudeUsageEnabled || settings.codexUsageEnabled || settings.grokUsageEnabled
         guard shouldRun else {
             timer?.invalidate()
             timer = nil
@@ -226,13 +233,14 @@ final class UsageStore {
     /// WILLSET time (old values still visible), so this re-registers itself
     /// on every fire — and the actual re-read + reaction happens after
     /// hopping to a fresh `Task { @MainActor }`, where the NEW values are
-    /// visible. Reads ONLY the two toggles in the tracked closure: reading
+    /// visible. Reads ONLY the three toggles in the tracked closure: reading
     /// anything else here would make totally unrelated settings changes
     /// re-trigger provider enable/disable logic for no reason.
     private func armSettingsObservation() {
         withObservationTracking {
             _ = settings.claudeUsageEnabled
             _ = settings.codexUsageEnabled
+            _ = settings.grokUsageEnabled
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.applyEnabledState()
@@ -247,6 +255,7 @@ final class UsageStore {
         switch kind {
         case .claude: return claude
         case .codex: return codex
+        case .grok: return grok
         }
     }
 
@@ -254,6 +263,7 @@ final class UsageStore {
         switch kind {
         case .claude: claude = state
         case .codex: codex = state
+        case .grok: grok = state
         }
     }
 
@@ -261,6 +271,7 @@ final class UsageStore {
         switch kind {
         case .claude: return claudeProvider
         case .codex: return codexProvider
+        case .grok: return grokProvider
         }
     }
 
@@ -268,12 +279,13 @@ final class UsageStore {
         switch kind {
         case .claude: return settings.claudeUsageEnabled
         case .codex: return settings.codexUsageEnabled
+        case .grok: return settings.grokUsageEnabled
         }
     }
 }
 
 #if DEBUG
-/// Preview-only stub `UsageProviding`: previews seed `claude`/`codex`
+/// Preview-only stub `UsageProviding`: previews seed `claude`/`codex`/`grok`
 /// directly (see `UsageStore.previewStore` below), so this never actually
 /// needs to fetch — it exists only to satisfy `UsageStore.init`'s
 /// non-optional provider parameters without touching disk/Keychain/network.
@@ -284,22 +296,26 @@ private struct PreviewNoOpUsageProvider: UsageProviding {
 }
 
 extension UsageStore {
-    /// Preview-only: a store pre-seeded with fixed `claude`/`codex` states,
-    /// bypassing the fetch pipeline and settings entirely — mirrors
+    /// Preview-only: a store pre-seeded with fixed `claude`/`codex`/`grok`
+    /// states, bypassing the fetch pipeline and settings entirely — mirrors
     /// `SessionStore.previewStore`. Lives in this file so it can reach the
-    /// private-set `claude`/`codex` properties. Never compiled into release.
+    /// private-set `claude`/`codex`/`grok` properties. Never compiled into
+    /// release.
     @MainActor
     static func previewStore(
         claude: ProviderUsageState = .disabled,
-        codex: ProviderUsageState = .disabled
+        codex: ProviderUsageState = .disabled,
+        grok: ProviderUsageState = .disabled
     ) -> UsageStore {
         let store = UsageStore(
             settings: AppSettings(),
             claudeProvider: PreviewNoOpUsageProvider(),
-            codexProvider: PreviewNoOpUsageProvider()
+            codexProvider: PreviewNoOpUsageProvider(),
+            grokProvider: PreviewNoOpUsageProvider()
         )
         store.claude = claude
         store.codex = codex
+        store.grok = grok
         return store
     }
 }

@@ -17,6 +17,7 @@ final class AppSettings {
         static let playSound = "notifications.playSound"
         static let claudeUsageEnabled = "usage.claudeEnabled"
         static let codexUsageEnabled = "usage.codexEnabled"
+        static let grokUsageEnabled = "usage.grokEnabled"
         static let showBackgroundSessions = "sessions.showBackground"
     }
 
@@ -54,8 +55,14 @@ final class AppSettings {
         didSet { defaults.set(codexUsageEnabled, forKey: Keys.codexUsageEnabled) }
     }
 
+    /// Opt-in for Grok/xAI usage tracking (Settings toggle). Default
+    /// **false** — same rationale as `claudeUsageEnabled`.
+    var grokUsageEnabled: Bool {
+        didSet { defaults.set(grokUsageEnabled, forKey: Keys.grokUsageEnabled) }
+    }
+
     /// Show agents that have no terminal of their own — scripted or nested
-    /// runs like `codex exec`, `claude -p`, and CI. Default **false**: these
+    /// runs like `codex exec`, `claude -p`, grok headless, and CI. Default **false**: these
     /// have no pane to jump to and nobody waiting on them, and one agent
     /// spawning others produces them faster than real sessions, so left
     /// visible they bury the sessions you actually care about.
@@ -92,6 +99,7 @@ final class AppSettings {
         playSound = defaults.object(forKey: Keys.playSound) as? Bool ?? true
         claudeUsageEnabled = defaults.object(forKey: Keys.claudeUsageEnabled) as? Bool ?? false
         codexUsageEnabled = defaults.object(forKey: Keys.codexUsageEnabled) as? Bool ?? false
+        grokUsageEnabled = defaults.object(forKey: Keys.grokUsageEnabled) as? Bool ?? false
         showBackgroundSessions = defaults.object(forKey: Keys.showBackgroundSessions) as? Bool ?? false
     }
 }

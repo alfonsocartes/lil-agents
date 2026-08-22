@@ -27,6 +27,16 @@ cp "$BIN" "$APP_DIR/Contents/MacOS/AgentDeck"
 cp "$ROOT/packaging/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$ROOT/packaging/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
+# Generated Bundle.module loads Bundle.main.bundleURL/AgentDeck_AgentDeck.bundle
+# — the .app root, not Contents/MacOS.
+BIN_DIR="$(dirname "$BIN")"
+RESOURCE_BUNDLE="$BIN_DIR/AgentDeck_AgentDeck.bundle"
+if [[ ! -d "$RESOURCE_BUNDLE" ]]; then
+    echo "error: resource bundle not found at $RESOURCE_BUNDLE" >&2
+    exit 1
+fi
+cp -R "$RESOURCE_BUNDLE" "$APP_DIR/AgentDeck_AgentDeck.bundle"
+
 echo "==> Embedding Sparkle.framework"
 SPARKLE_FRAMEWORK="$(find .build -path '*macos-arm64_x86_64/Sparkle.framework' -type d | head -1)"
 if [[ -z "$SPARKLE_FRAMEWORK" ]]; then

@@ -83,8 +83,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Install/refresh CLI hooks every launch. install() is idempotent and
         // self-healing (upsertGroups repairs any stale/broken prior entries), so
         // running it unconditionally keeps config correct across app updates.
-        // Set AGENTDECK_NO_INSTALL=1 to skip touching ~/.claude and ~/.codex
-        // (used for smoke-testing the listener/UI without altering real config).
+        // Set AGENTDECK_NO_INSTALL=1 to skip touching ~/.claude, ~/.codex, and
+        // ~/.grok (used for smoke-testing the listener/UI without altering real config).
         if ProcessInfo.processInfo.environment["AGENTDECK_NO_INSTALL"] == nil {
             // Off the main thread — install() does file reads, JSON parsing and
             // atomic writes we don't want blocking launch.

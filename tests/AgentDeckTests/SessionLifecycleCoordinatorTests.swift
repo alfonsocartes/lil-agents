@@ -145,6 +145,30 @@ import Testing
         #expect(system.store.sessions.isEmpty)
     }
 
+    @Test func lateStopForEndedSessionDoesNotEvictReplacement() {
+        let system = makeSystem()
+        let process = processIdentity(pid: 211)
+
+        system.lifecycle.receive(
+            makeEvent("SessionStart", id: "old", tool: "grok", agentPID: process.pid),
+            processLookup: .running(process)
+        )
+        system.lifecycle.receive(
+            makeEvent("SessionEnd", id: "old", tool: "grok", agentPID: process.pid),
+            processLookup: .running(process)
+        )
+        system.lifecycle.receive(
+            makeEvent("SessionStart", id: "new", tool: "grok", agentPID: process.pid),
+            processLookup: .running(process)
+        )
+        system.lifecycle.receive(
+            makeEvent("Stop", id: "old", tool: "grok", agentPID: process.pid),
+            processLookup: .running(process)
+        )
+
+        #expect(system.store.sessions.map(\.id) == ["new"])
+    }
+
     @Test func PIDLessOldSessionEndCannotRemoveProcessBoundReplacement() {
         let system = makeSystem()
         let process = processIdentity(pid: 113)

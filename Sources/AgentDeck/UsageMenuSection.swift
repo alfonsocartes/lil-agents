@@ -18,31 +18,24 @@ import SwiftUI
 ///
 /// Includes its own trailing `Divider` so callers (MenuBarContentView) can
 /// insert this section as a single unit; renders `EmptyView` — no rows, no
-/// divider — when both providers are `.disabled`, the default until the user
-/// opts in via Settings.
+/// divider — when all three providers are `.disabled`, the default until the
+/// user opts in via Settings.
 struct UsageMenuSection: View {
     let usage: UsageStore
 
     var body: some View {
-        if usage.claude == .disabled && usage.codex == .disabled {
+        if usage.claude == .disabled && usage.codex == .disabled && usage.grok == .disabled {
             EmptyView()
         } else {
             VStack(alignment: .leading, spacing: 2) {
                 if usage.claude != .disabled {
-                    row(
-                        symbolName: AgentTool.claude.symbol,
-                        title: "Claude",
-                        state: usage.claude,
-                        provider: .claude
-                    )
+                    row(tool: .claude, title: "Claude", state: usage.claude, provider: .claude)
                 }
                 if usage.codex != .disabled {
-                    row(
-                        symbolName: AgentTool.codex.symbol,
-                        title: "Codex",
-                        state: usage.codex,
-                        provider: .codex
-                    )
+                    row(tool: .codex, title: "Codex", state: usage.codex, provider: .codex)
+                }
+                if usage.grok != .disabled {
+                    row(tool: .grok, title: "Grok", state: usage.grok, provider: .grok)
                 }
 
                 Divider()
@@ -57,8 +50,8 @@ struct UsageMenuSection: View {
     /// (label / gauge / percent / reset) align across every line of every
     /// row — misaligned bars would read as sloppier than no bars at all.
     private enum Metrics {
-        /// Fits "week", the longest window label, at `.caption`.
-        static let windowLabelWidth: CGFloat = 30
+        /// Fits "month", the longest window label, at `.caption`.
+        static let windowLabelWidth: CGFloat = 36
         /// Fixed gauge track. Long enough that 75% vs 90% is visibly
         /// different territory, and — the binding constraint — short enough
         /// that the WORST-CASE reset caption ("resets Wed 12 PM") always
@@ -75,14 +68,14 @@ struct UsageMenuSection: View {
     }
 
     private func row(
-        symbolName: String,
+        tool: AgentTool,
         title: String,
         state: ProviderUsageState,
         provider: Provider
     ) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: symbolName)
-                .frame(width: 18, alignment: .center)
+            AgentToolIcon(tool: tool)
+                .frame(width: 18, height: 14, alignment: .center)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
@@ -123,6 +116,8 @@ struct UsageMenuSection: View {
                 windowLine(label: "5h", window: state.usage?.session, now: now)
                 windowLine(label: "week", window: state.usage?.weekly, now: now)
             case .codex:
+                windowLine(label: "week", window: state.usage?.weekly, now: now)
+            case .grok:
                 windowLine(label: "week", window: state.usage?.weekly, now: now)
             }
         }
@@ -170,6 +165,7 @@ struct UsageMenuSection: View {
     private enum Provider {
         case claude
         case codex
+        case grok
     }
 
     /// v1 is strictly read-only (see the feature plan) — every error state
@@ -181,6 +177,7 @@ struct UsageMenuSection: View {
         switch provider {
         case .claude: cli = "claude"
         case .codex: cli = "codex"
+        case .grok: cli = "grok"
         }
         switch error {
         case .credentialsMissing:

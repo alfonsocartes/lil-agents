@@ -20,9 +20,9 @@ struct MenuBarContentView: View {
     let store: SessionStore
     let awake: StayAwakeController
     let overlay: OverlayController
-    /// Claude/Codex usage state, rendered as `UsageMenuSection` between the
-    /// header and the session list, and refreshed (throttled) whenever the
-    /// dropdown appears.
+    /// Claude/Codex/Grok usage state, rendered as `UsageMenuSection` between
+    /// the header and the session list, and refreshed (throttled) whenever
+    /// the dropdown appears.
     let usage: UsageStore
     @ObservedObject var updater: UpdaterController
 
@@ -56,8 +56,8 @@ struct MenuBarContentView: View {
             Divider()
                 .padding(.vertical, 4)
 
-            // Renders EmptyView (and adds no divider of its own) when both
-            // providers are disabled — see UsageMenuSection's doc comment.
+            // Renders EmptyView (and adds no divider of its own) when all
+            // three providers are disabled — see UsageMenuSection's doc comment.
             UsageMenuSection(usage: usage)
 
             sessionsSection
@@ -213,7 +213,7 @@ struct StatusIconLabel: View {
         if !usageRows.isEmpty,
            let composite = UsageMenuBarIcon.labelImage(
                attention: AttentionIcon.image(attention: store.attention, isAwake: awake.isAwake),
-               rows: usageRows,
+               rows: menuBarIconRows,
                darkAppearance: colorScheme == .dark
            ) {
             Image(nsImage: composite)
@@ -235,17 +235,18 @@ struct StatusIconLabel: View {
         }
     }
 
-    /// Claude's row shows its 5-hour percent (the user's explicit choice);
-    /// Codex's shows its weekly percent (currently the only window Codex
-    /// exposes). A `.disabled` provider contributes no row at all. The raw
-    /// percent rides along beside the formatted text so the bitmap can draw
-    /// its micro gauge and pick the row's urgency tint (UsageMenuBarIcon).
+    /// Each enabled provider contributes its weekly percent (Claude's 5-hour
+    /// window stays in the dropdown/overlay). A `.disabled` provider
+    /// contributes no row at all. The raw percent rides along beside the
+    /// formatted text so the bitmap can pick the row's urgency tint
+    /// (UsageMenuBarIcon).
     private var usageRows: [UsageMenuBarIcon.Row] {
         var rows: [UsageMenuBarIcon.Row] = []
         if usage.claude != .disabled {
-            let percent = usage.claude.usage?.session?.percent
+            let percent = usage.claude.usage?.weekly?.percent
             rows.append(UsageMenuBarIcon.Row(
                 symbolName: AgentTool.claude.symbol,
+                logoImage: AgentTool.claude.logoImage,
                 text: UsageFormatting.percentLabel(percent),
                 percent: percent,
                 dimmed: usage.claude.isDimmed
@@ -255,12 +256,30 @@ struct StatusIconLabel: View {
             let percent = usage.codex.usage?.weekly?.percent
             rows.append(UsageMenuBarIcon.Row(
                 symbolName: AgentTool.codex.symbol,
+                logoImage: AgentTool.codex.logoImage,
                 text: UsageFormatting.percentLabel(percent),
                 percent: percent,
                 dimmed: usage.codex.isDimmed
             ))
         }
+        if usage.grok != .disabled {
+            let percent = usage.grok.usage?.weekly?.percent
+            rows.append(UsageMenuBarIcon.Row(
+                symbolName: AgentTool.grok.symbol,
+                logoImage: AgentTool.grok.logoImage,
+                text: UsageFormatting.percentLabel(percent),
+                percent: percent,
+                dimmed: usage.grok.isDimmed
+            ))
+        }
         return rows
+    }
+
+    /// Menu bar bitmap is 21pt and only designed for 1–2 rows; keep the two highest percents (nil last).
+    private var menuBarIconRows: [UsageMenuBarIcon.Row] {
+        let rows = usageRows
+        guard rows.count > 2 else { return rows }
+        return Array(rows.sorted { ($0.percent ?? -1) > ($1.percent ?? -1) }.prefix(2))
     }
 }
 

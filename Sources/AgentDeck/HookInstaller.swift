@@ -2,9 +2,10 @@ import Foundation
 import MachO
 import Synchronization
 
-/// Installs and removes AgentDeck's lifecycle hooks in Claude Code and Codex CLI.
+/// Installs and removes AgentDeck's lifecycle hooks in Claude Code, Codex CLI,
+/// and Grok CLI.
 ///
-/// Both CLIs are configured to invoke a small generated forwarder script on each
+/// Each CLI is configured to invoke a small generated forwarder script on each
 /// lifecycle event. The script reads the hook's stdin JSON, merges in `tool`,
 /// `event`, the pane's controlling `tty`, and the owning CLI PID, then POSTs
 /// the result — bearing the per-install
@@ -12,11 +13,13 @@ import Synchronization
 /// local listener (`127.0.0.1:<port>/event`) matching the `HookEvent` wire
 /// contract in Model.swift.
 ///
-/// Config files are always merged (never clobbered): existing hook entries from
-/// other tools/plugins are preserved, and our own entries are only added once
-/// (matched by exact command string), making install idempotent.
+/// Claude and Codex config files are always merged (never clobbered): existing
+/// hook entries from other tools/plugins are preserved, and our own entries
+/// are only added once (matched by exact command string), making install
+/// idempotent. Grok's `~/.grok/hooks/agentdeck.json` is fully owned and
+/// overwritten each launch.
 enum HookInstaller {
-    struct Status { var claude: Bool; var codex: Bool }
+    struct Status { var claude: Bool; var codex: Bool; var grok: Bool }
 
     // MARK: - Paths
 
@@ -24,7 +27,8 @@ enum HookInstaller {
     /// computed from. Default `nil` → the real `homeDirectoryForCurrentUser`,
     /// so production behavior is byte-for-byte unchanged. Tests set this to a
     /// temp dir so install/uninstall never read or mutate the developer's real
-    /// `~/.claude/settings.json` or `~/.codex/hooks.json`. Mutex-backed so the
+    /// `~/.claude/settings.json`, `~/.codex/hooks.json`, or
+    /// `~/.grok/hooks/agentdeck.json`. Mutex-backed so the
     /// static is concurrency-safe under Swift 6 (tests that set it are also
     /// `.serialized`, but the storage itself must not be a bare mutable global).
     internal static var homeDirectoryOverride: URL? {
@@ -95,6 +99,14 @@ enum HookInstaller {
         homeDirectory.appendingPathComponent(".codex/hooks.json")
     }
 
+    private static var grokHome: URL {
+        GrokCLIHome.resolve(homeDirectory: homeDirectory)
+    }
+
+    private static var grokHooksURL: URL {
+        grokHome.appendingPathComponent("hooks/agentdeck.json")
+    }
+
     private static var forwarderScriptURL: URL {
         AgentDeck.supportDir.appendingPathComponent("forward-event.sh")
     }
@@ -131,6 +143,15 @@ enum HookInstaller {
         "SessionEnd",
     ]
 
+    /// Events wired into Grok CLI's `~/.grok/hooks/agentdeck.json`. Same
+    /// matcher-group JSON shape as Claude Code. Grok also scans
+    /// `~/.claude/settings.json`, so a Grok session dual-fires our Claude
+    /// hooks — the forwarder retags those via `GROK_HOOK_EVENT`.
+    private static let grokEvents = [
+        "SessionStart", "UserPromptSubmit", "PreToolUse", "Notification",
+        "Stop", "StopFailure", "StopCancelled", "SessionEnd", "SubagentStop",
+    ]
+
     private static func command(for tool: String, event: String) -> String {
         // The forwarder lives under "Application Support" — a path WITH A SPACE.
         // The command is run through a shell, so the path MUST be quoted or the
@@ -142,11 +163,19 @@ enum HookInstaller {
 
     static func status() -> Status {
         let scriptPath = forwarderScriptURL.path
+        // JSONSerialization escapes `/` as `\/` unless `.withoutEscapingSlashes`
+        // is set, so a naive contains(scriptPath) misses our own writes.
+        let escapedScriptPath = scriptPath.replacingOccurrences(of: "/", with: "\\/")
+        func mentionsForwarder(_ text: String) -> Bool {
+            text.contains(scriptPath) || text.contains(escapedScriptPath)
+        }
         let claudeText = (try? String(contentsOf: claudeSettingsURL, encoding: .utf8)) ?? ""
         let codexText = (try? String(contentsOf: codexHooksURL, encoding: .utf8)) ?? ""
+        let grokText = (try? String(contentsOf: grokHooksURL, encoding: .utf8)) ?? ""
         return Status(
-            claude: claudeText.contains(scriptPath),
-            codex: codexText.contains(scriptPath)
+            claude: mentionsForwarder(claudeText),
+            codex: mentionsForwarder(codexText),
+            grok: mentionsForwarder(grokText)
         )
     }
 
@@ -158,6 +187,7 @@ enum HookInstaller {
         try writeMergerScript()
         try installClaudeHooks()
         try installCodexHooks()
+        try installGrokHooks()
     }
 
     // MARK: - uninstall()
@@ -165,6 +195,7 @@ enum HookInstaller {
     static func uninstall() throws {
         try uninstallClaudeHooks()
         try uninstallCodexHooks()
+        try uninstallGrokHooks()
 
         let fm = FileManager.default
         try? fm.removeItem(at: forwarderScriptURL)
@@ -199,6 +230,12 @@ enum HookInstaller {
         # this point re-reads stdin.
         stdin_json="$(cat)"
 
+        # Grok dual-fires Claude-compat hooks. Retag via GROK_HOOK_EVENT, not
+        # GROK_SESSION_ID (a nested `claude` spawned from Grok might inherit it).
+        if [ -n "${GROK_HOOK_EVENT:-}" ]; then
+          TOOL=grok
+        fi
+
         # Identify the CLI process that owns this session, then take THAT
         # process's controlling terminal as the session's pane. Start at our
         # parent rather than $$ so the short-lived forwarder can never be
@@ -221,6 +258,7 @@ enum HookInstaller {
         case "$TOOL" in
           claude) owner_match="claude" ;;
           codex)  owner_match="codex" ;;
+          grok)   owner_match="grok" ;;
           *)      owner_match="" ;;
         esac
 
@@ -517,6 +555,13 @@ enum HookInstaller {
             if tty:
                 data["tty"] = tty
 
+            # Grok's stdin JSON is camelCase. Copy into the snake_case fields
+            # HookEvent decodes, without overwriting a value already present.
+            if "session_id" not in data and "sessionId" in data:
+                data["session_id"] = data["sessionId"]
+            if "notification_type" not in data and "notificationType" in data:
+                data["notification_type"] = data["notificationType"]
+
             for key, env_name in ENV_FIELDS.items():
                 value = os.environ.get(env_name, "")
                 if value:
@@ -620,6 +665,31 @@ enum HookInstaller {
 
         let out = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
         try out.write(to: codexHooksURL, options: .atomic)
+    }
+
+    // MARK: - Grok CLI (~/.grok/hooks/agentdeck.json)
+
+    private static func installGrokHooks() throws {
+        var hooks: [String: Any] = [:]
+        for event in grokEvents {
+            let entry: [String: Any] = [
+                "type": "command",
+                "command": command(for: "grok", event: event),
+                "timeout": 10,
+            ]
+            hooks[event] = [["matcher": "", "hooks": [entry]]]
+        }
+        let root: [String: Any] = ["hooks": hooks]
+
+        try FileManager.default.createDirectory(
+            at: grokHooksURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: grokHooksURL, options: .atomic)
+    }
+
+    /// Deletes only `agentdeck.json`. Sibling files in `~/.grok/hooks/` stay.
+    private static func uninstallGrokHooks() throws {
+        try? FileManager.default.removeItem(at: grokHooksURL)
     }
 
     // MARK: - Shared matcher-group merge/prune helpers

@@ -4,12 +4,14 @@ import Foundation
 enum AgentTool: String, Codable {
     case claude
     case codex
+    case grok
     case unknown
 
     var display: String {
         switch self {
         case .claude: return "Claude"
         case .codex: return "Codex"
+        case .grok: return "Grok"
         case .unknown: return "Agent"
         }
     }
@@ -19,6 +21,7 @@ enum AgentTool: String, Codable {
         switch self {
         case .claude: return "sparkles"
         case .codex: return "chevron.left.forwardslash.chevron.right"
+        case .grok: return "hare"
         case .unknown: return "terminal"
         }
     }
@@ -60,11 +63,13 @@ struct HookEvent: Codable, Sendable {
     var cwd: String?
     var tty: String?
     var notification_type: String?
-    /// PID of the long-lived Claude/Codex process that owns this lifecycle.
+    /// Grok Stop payload; `channel_closed` / `shutdown` are session-end, not idle.
+    var reason: String?
+    /// PID of the long-lived Claude/Codex/Grok process that owns this lifecycle.
     /// Optional so events from an older installed forwarder remain decodable.
     var agent_pid: Int32?
     /// True when the owning CLI has no controlling terminal of its own — a
-    /// scripted or nested run (`codex exec`, `claude -p`, CI) rather than a
+    /// scripted or nested run (`codex exec`, `claude -p`, grok headless, CI) rather than a
     /// session someone is sitting in front of. Set by the forwarder, which
     /// reads the tty of the owning process ONLY, never an ancestor's. Optional
     /// so events from an older installed forwarder remain decodable (and
