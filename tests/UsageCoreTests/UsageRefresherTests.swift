@@ -9,6 +9,37 @@ import Testing
         fetchedAt: fixedNow
     )
 
+    @Test func applyEnabledFlagsHidesDisabledWithoutFetching() async throws {
+        let dir = makeTempDir(); defer { cleanup(dir) }
+        let store = SnapshotStore(directory: dir)
+        try store.save(UsageSnapshot(
+            claude: ProviderSnapshot(
+                enabled: true, usage: usage, lastAttemptAt: fixedNow,
+                retryAfterUntil: fixedNow.addingTimeInterval(30)
+            ),
+            grok: .empty,
+            codex: ProviderSnapshot(enabled: true, usage: usage, lastAttemptAt: fixedNow)
+        ))
+        let provider = StubUsageProvider([.success(usage)])
+        let refresher = UsageRefresher(
+            snapshotStore: store,
+            tokens: MemoryTokenStore([.codex: "tok"]),
+            claudeProvider: provider,
+            now: { fixedNow }
+        )
+
+        let snapshot = await refresher.applyEnabledFlags(
+            UsageSettings(claudeEnabled: true, grokEnabled: false, codexEnabled: false)
+        )
+        #expect(snapshot.claude.enabled == true)
+        #expect(snapshot.claude.lastAttemptAt == fixedNow)
+        #expect(snapshot.codex.enabled == false)
+        #expect(snapshot.codex.usage == usage)
+        #expect(snapshot.codex.lastAttemptAt == nil)
+        #expect(provider.callCount == 0)
+        #expect(store.load().codex.enabled == false)
+    }
+
     @Test func disabledSkipsFetchAndKeepsLastUsage() async throws {
         let dir = makeTempDir(); defer { cleanup(dir) }
         let store = SnapshotStore(directory: dir)

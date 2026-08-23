@@ -18,13 +18,38 @@ final class RefreshController {
     }
 
     func refreshNow() async {
-        snapshot = await refresher.refreshNow(settings: EnabledSettings.settings)
-        WidgetCenter.shared.reloadAllTimelines()
+        snapshot = await runRefresh { await refresher.refreshNow(settings: $0) }
     }
 
     func refreshAll() async {
-        snapshot = await refresher.refreshAll(settings: EnabledSettings.settings)
+        snapshot = await runRefresh { await refresher.refreshAll(settings: $0) }
+    }
+
+    /// Persist the toggle first so widgets hide a provider immediately,
+    /// then fetch. Handoff only auto-enables providers the user has never
+    /// toggled — an explicit off is not flipped back on by a leftover token.
+    private func runRefresh(_ fetch: (UsageSettings) async -> UsageSnapshot) async -> UsageSnapshot {
+        importHandoffTokens()
+        let settings = EnabledSettings.settings
+        snapshot = await refresher.applyEnabledFlags(settings)
         WidgetCenter.shared.reloadAllTimelines()
+        let result = await fetch(settings)
+        WidgetCenter.shared.reloadAllTimelines()
+        return result
+    }
+
+    /// If lil agents copied tokens into iCloud Keychain, turn those
+    /// providers on so widgets show them without a second tap.
+    private func importHandoffTokens() {
+        let store = KeychainTokenStore()
+        for kind in ProviderKind.allCases {
+            guard HandoffEnablement.shouldAutoEnable(
+                explicitSetting: EnabledSettings.explicitEnabled(kind)
+            ) else { continue }
+            if let raw = try? store.load(kind: kind), !raw.isEmpty {
+                EnabledSettings.set(true, kind: kind)
+            }
+        }
     }
 
     nonisolated static func registerBackgroundTask() {

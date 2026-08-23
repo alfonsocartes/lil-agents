@@ -10,19 +10,11 @@ enum ProviderChrome {
         }
     }
 
-    static func symbolName(_ kind: ProviderKind) -> String {
+    static func logoAssetName(_ kind: ProviderKind) -> String {
         switch kind {
-        case .claude: "sparkles"
-        case .codex: "chevron.left.forwardslash.chevron.right"
-        case .grok: "hare"
-        }
-    }
-
-    static func credentialsCaption(_ kind: ProviderKind) -> String {
-        switch kind {
-        case .claude: "~/.claude/.credentials.json"
-        case .grok: "~/.grok/auth.json"
-        case .codex: "~/.codex/auth.json"
+        case .claude: "LogoClaude"
+        case .grok: "LogoGrok"
+        case .codex: "LogoCodex"
         }
     }
 
@@ -41,10 +33,14 @@ enum ProviderChrome {
         }
     }
 
-    static func errorText(_ error: UsageFetchError) -> String {
+    static func errorText(_ error: UsageFetchError, kind: ProviderKind) -> String {
         switch error {
-        case .credentialsMissing, .tokenExpired: "Sign in again"
-        case .rateLimited, .network, .badResponse: "Usage unavailable"
+        case .credentialsMissing:
+            "Tap Sign in to connect \(title(kind)) on this phone."
+        case .tokenExpired:
+            "Token expired — tap Sign in again."
+        case .rateLimited, .network, .badResponse:
+            "Usage unavailable. Pull to refresh, or sign in again."
         }
     }
 }

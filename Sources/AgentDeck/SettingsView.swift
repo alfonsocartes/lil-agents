@@ -162,6 +162,20 @@ struct SettingsView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            Toggle("Send tokens to iPhone", isOn: $settings.shareTokensWithIPhone)
+
+            Text("Copies those same CLI sign-ins into iCloud Keychain so lil usage on your iPhone can use them. Same Apple ID, iCloud Keychain on, on this Mac and the phone. Can take a minute. The iPhone app still works without this — tap Sign in there.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let error = IPhoneTokenHandoff.lastError {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

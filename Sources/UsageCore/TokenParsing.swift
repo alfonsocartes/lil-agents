@@ -7,6 +7,15 @@ public enum TokenParsing {
     public static func claude(_ raw: String) throws -> ClaudeCredentials {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw UsageFetchError.credentialsMissing }
+        if trimmed.contains("\"claudeAiOauth\"") {
+            do {
+                return try decodeClaudeJSON(Data(trimmed.utf8))
+            } catch let error as UsageFetchError {
+                throw error
+            } catch {
+                throw UsageFetchError.credentialsMissing
+            }
+        }
         if trimmed.hasPrefix("{") {
             do {
                 return try decodeClaudeJSON(Data(trimmed.utf8))
@@ -16,12 +25,14 @@ public enum TokenParsing {
                 throw UsageFetchError.credentialsMissing
             }
         }
+        if trimmed.contains(where: \.isWhitespace) {
+            throw UsageFetchError.credentialsMissing
+        }
         return ClaudeCredentials(accessToken: trimmed, expiresAt: nil)
     }
 
     public static func codex(_ raw: String) throws -> CodexCredentials {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw UsageFetchError.credentialsMissing }
+        let trimmed = try tokenShape(raw)
         if trimmed.hasPrefix("{") {
             do {
                 return try decodeCodexJSON(Data(trimmed.utf8))
@@ -35,8 +46,7 @@ public enum TokenParsing {
     }
 
     public static func grok(_ raw: String, now: Date = Date()) throws -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw UsageFetchError.credentialsMissing }
+        let trimmed = try tokenShape(raw)
         if trimmed.hasPrefix("{") {
             if let object = try? JSONDecoder().decode(GrokKeyObject.self, from: Data(trimmed.utf8)),
                let key = object.key {
@@ -54,6 +64,18 @@ public enum TokenParsing {
         return trimmed
     }
 
+    /// Bare tokens are a single word. Shell commands (`security find-…`,
+    /// `cat ~/.grok/auth.json`) have spaces and are not tokens.
+    private static func tokenShape(_ raw: String) throws -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw UsageFetchError.credentialsMissing }
+        if trimmed.hasPrefix("{") { return trimmed }
+        if trimmed.contains(where: \.isWhitespace) {
+            throw UsageFetchError.credentialsMissing
+        }
+        return trimmed
+    }
+
     // MARK: - Claude CLI `.credentials.json`
 
     /// Same shape as AgentDeck's `CredentialsFile` — camelCase only, no
@@ -67,11 +89,50 @@ public enum TokenParsing {
     }
 
     private static func decodeClaudeJSON(_ data: Data) throws -> ClaudeCredentials {
-        let file = try JSONDecoder().decode(CredentialsFile.self, from: data)
-        guard let accessToken = file.claudeAiOauth?.accessToken else {
+        if let file = try? JSONDecoder().decode(CredentialsFile.self, from: data),
+           let accessToken = file.claudeAiOauth?.accessToken, !accessToken.isEmpty {
+            return ClaudeCredentials(accessToken: accessToken, expiresAt: file.claudeAiOauth?.expiresAt)
+        }
+        let text = String(data: data, encoding: .utf8) ?? ""
+        guard let object = extractJSONObject(afterKey: "claudeAiOauth", in: text) else {
             throw UsageFetchError.credentialsMissing
         }
-        return ClaudeCredentials(accessToken: accessToken, expiresAt: file.claudeAiOauth?.expiresAt)
+        let oauth = try JSONDecoder().decode(CredentialsFile.OAuth.self, from: Data(object.utf8))
+        guard let accessToken = oauth.accessToken, !accessToken.isEmpty else {
+            throw UsageFetchError.credentialsMissing
+        }
+        return ClaudeCredentials(accessToken: accessToken, expiresAt: oauth.expiresAt)
+    }
+
+    /// Pulls a nested object out of a larger (or truncated) blob so MCP
+    /// entries sitting next to `claudeAiOauth` don't have to decode.
+    static func extractJSONObject(afterKey key: String, in text: String) -> String? {
+        guard let keyRange = text.range(of: "\"\(key)\"") else { return nil }
+        guard let colon = text[keyRange.upperBound...].firstIndex(of: ":") else { return nil }
+        guard let start = text[colon...].firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var inString = false
+        var escape = false
+        var i = start
+        while i < text.endIndex {
+            let ch = text[i]
+            if inString {
+                if escape { escape = false }
+                else if ch == "\\" { escape = true }
+                else if ch == "\"" { inString = false }
+            } else if ch == "\"" {
+                inString = true
+            } else if ch == "{" {
+                depth += 1
+            } else if ch == "}" {
+                depth -= 1
+                if depth == 0 {
+                    return String(text[start...i])
+                }
+            }
+            i = text.index(after: i)
+        }
+        return nil
     }
 
     // MARK: - Codex CLI `auth.json`

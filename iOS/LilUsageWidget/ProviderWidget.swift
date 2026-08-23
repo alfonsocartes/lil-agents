@@ -25,10 +25,18 @@ struct ProviderWidgetView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        ProviderUsageBody(
-            kind: entry.kind,
-            snapshot: entry.snapshot,
-            layout: family == .systemSmall ? .stackedReset : .inlineReset
-        )
+        if entry.snapshot.enabled {
+            ProviderUsageBody(
+                kind: entry.kind,
+                snapshot: entry.snapshot,
+                layout: family == .systemSmall ? .stackedReset : .inlineReset
+            )
+        } else {
+            Text("Turn on \(ProviderChrome.title(entry.kind)) in lil usage")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 }

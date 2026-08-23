@@ -63,6 +63,10 @@ final class UsageStore {
     /// available.
     private var taskGeneration: [UsageProviderKind: Int] = [:]
 
+    /// Fired after a provider fetch finishes so the iPhone handoff can
+    /// recopy CLI blobs (tokens rotate). Nil in tests.
+    var onRefreshCompleted: (() -> Void)?
+
     private var timer: Timer?
 
     init(
@@ -161,6 +165,7 @@ final class UsageStore {
             guard !Task.isCancelled else { return }
             handleFailure(kind, error: .network(String(describing: error)), priorUsage: priorUsage)
         }
+        onRefreshCompleted?()
     }
 
     private func handleFailure(_ kind: UsageProviderKind, error: UsageFetchError, priorUsage: ProviderUsage?) {

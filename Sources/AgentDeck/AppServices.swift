@@ -52,5 +52,15 @@ final class AppServices {
     init() {
         usage = UsageStore(settings: settings)
         overlay = OverlayController(store: store, usage: usage)
+        settings.onShareTokensWithIPhoneChange = { enabled in
+            IPhoneTokenHandoff.sync(enabled: enabled)
+        }
+        usage.onRefreshCompleted = { [settings] in
+            guard settings.shareTokensWithIPhone else { return }
+            IPhoneTokenHandoff.sync(enabled: true)
+        }
+        if settings.shareTokensWithIPhone {
+            IPhoneTokenHandoff.sync(enabled: true)
+        }
     }
 }

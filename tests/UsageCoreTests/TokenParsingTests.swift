@@ -2,6 +2,15 @@ import Foundation
 import Testing
 @testable import UsageCore
 
+@Suite struct KeychainTokenStoreIdentityTests {
+    @Test func serviceNamesMatchIPhoneHandoff() {
+        #expect(KeychainTokenStore.service(for: .claude) == "com.wandity.lilagents.token.claude")
+        #expect(KeychainTokenStore.service(for: .grok) == "com.wandity.lilagents.token.grok")
+        #expect(KeychainTokenStore.service(for: .codex) == "com.wandity.lilagents.token.codex")
+        #expect(KeychainTokenStore.accessGroupSuffix == "group.com.wandity.lilagents")
+    }
+}
+
 @Suite struct TokenParsingTests {
     @Test func claudeJSONExtractsAccessTokenAndExpiresAt() throws {
         let raw = """
@@ -23,9 +32,33 @@ import Testing
         expectCredentialsMissing { try TokenParsing.claude("") }
     }
 
+    @Test func claudeShellCommandIsNotAToken() {
+        expectCredentialsMissing {
+            try TokenParsing.claude(#"security find-generic-password -w -s "Claude Code-credentials""#)
+        }
+    }
+
     @Test func claudeJSONWithoutAccessTokenFails() {
         expectCredentialsMissing { try TokenParsing.claude(#"{"claudeAiOauth": {"expiresAt": 1}}"#) }
         expectCredentialsMissing { try TokenParsing.claude("{not json") }
+    }
+
+    @Test func claudeJSONWithSiblingMCPEntries() throws {
+        let raw = """
+        {"https://mcp.cloudflare.com":{"issuer":"https://mcp.cloudflare.com","accessToken":"mcp-x"},"claudeAiOauth":{"accessToken":"tok-123","expiresAt":1787507503542,"refreshToken":"refresh-xyz","scopes":["user:inference"],"subscriptionType":"max"}}
+        """
+        let credentials = try TokenParsing.claude(raw)
+        #expect(credentials.accessToken == "tok-123")
+        #expect(credentials.expiresAt == 1_787_507_503_542)
+    }
+
+    @Test func claudeJSONExtractsOauthFromTruncatedPrefix() throws {
+        let raw = """
+        zone.write","issuer":"https://mcp.cloudflare.com"},"claudeAiOauth":{"accessToken":"tok-123","expiresAt":99}}
+        """
+        let credentials = try TokenParsing.claude(raw)
+        #expect(credentials.accessToken == "tok-123")
+        #expect(credentials.expiresAt == 99)
     }
 
     @Test func codexSnakeCaseJSONDecodes() throws {
@@ -104,6 +137,11 @@ import Testing
     @Test func grokEmptyPasteFails() {
         expectCredentialsMissing { try TokenParsing.grok("  ") }
         expectCredentialsMissing { try TokenParsing.grok(#"{"key": ""}"#) }
+    }
+
+    @Test func macCatCommandIsNotAToken() {
+        expectCredentialsMissing { try TokenParsing.grok("cat ~/.grok/auth.json") }
+        expectCredentialsMissing { try TokenParsing.codex("cat ~/.codex/auth.json") }
     }
 
     private func expectCredentialsMissing<T>(_ body: () throws -> T) {

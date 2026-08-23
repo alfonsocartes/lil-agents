@@ -45,6 +45,18 @@ public actor UsageRefresher {
         self.transport = transport
     }
 
+    /// Writes `enabled` onto the persisted snapshot without fetching, so
+    /// widgets can hide a provider the moment the user toggles it off
+    /// instead of waiting on the other providers' network calls.
+    public func applyEnabledFlags(_ settings: UsageSettings) -> UsageSnapshot {
+        var snap = snapshotStore.load()
+        snap.claude = flagged(snap.claude, enabled: settings.claudeEnabled)
+        snap.grok = flagged(snap.grok, enabled: settings.grokEnabled)
+        snap.codex = flagged(snap.codex, enabled: settings.codexEnabled)
+        try? snapshotStore.save(snap)
+        return snap
+    }
+
     /// User-initiated refresh (host appear, pull-to-refresh, token paste).
     /// Bypasses `minAge`, `lastAttemptAt`, and 429 backoff so a newly pasted
     /// token is fetched immediately. Widget timelines keep the 20-minute
@@ -81,14 +93,7 @@ public actor UsageRefresher {
         current: Date
     ) async -> ProviderSnapshot {
         if !enabled {
-            var slot = prior
-            slot.enabled = false
-            // Keep last-known usage, but drop throttle gates so a re-enable
-            // fetches immediately (Mac UsageStore clears lastAttemptAt /
-            // retryAfterUntil on disable).
-            slot.lastAttemptAt = nil
-            slot.retryAfterUntil = nil
-            return slot
+            return flagged(prior, enabled: false)
         }
 
         let raw: String?
@@ -123,12 +128,17 @@ public actor UsageRefresher {
             return slot
         }
 
+        var workingRaw = raw
+        if injectedProvider(for: kind) == nil {
+            workingRaw = await refreshStoredTokenIfNeeded(kind: kind, raw: workingRaw, current: current)
+        }
+
         let provider: any UsageProviding
         if let injected = injectedProvider(for: kind) {
             provider = injected
         } else {
             do {
-                provider = try makeFetcher(kind: kind, raw: raw, current: current)
+                provider = try makeFetcher(kind: kind, raw: workingRaw, current: current)
             } catch {
                 return credentialsMissing(prior: prior, current: current)
             }
@@ -144,6 +154,10 @@ public actor UsageRefresher {
                 retryAfterUntil: nil
             )
         } catch let error as UsageFetchError {
+            if error == .tokenExpired, injectedProvider(for: kind) == nil,
+               let retried = await retryAfterRefresh(kind: kind, raw: workingRaw, current: current) {
+                return retried
+            }
             return failed(prior: prior, error: error, current: current)
         } catch {
             return failed(prior: prior, error: .network(String(describing: error)), current: current)
@@ -172,11 +186,57 @@ public actor UsageRefresher {
         return slot
     }
 
+    private func flagged(_ slot: ProviderSnapshot, enabled: Bool) -> ProviderSnapshot {
+        var slot = slot
+        slot.enabled = enabled
+        if !enabled {
+            // Keep last-known usage, but drop throttle gates so a re-enable
+            // fetches immediately (Mac UsageStore clears lastAttemptAt /
+            // retryAfterUntil on disable).
+            slot.lastAttemptAt = nil
+            slot.retryAfterUntil = nil
+        }
+        return slot
+    }
+
     private func injectedProvider(for kind: ProviderKind) -> (any UsageProviding)? {
         switch kind {
         case .claude: return claudeProvider
         case .grok: return grokProvider
         case .codex: return codexProvider
+        }
+    }
+
+    private func refreshStoredTokenIfNeeded(kind: ProviderKind, raw: String, current: Date) async -> String {
+        guard TokenRefresh.needsRefresh(kind: kind, raw: raw, now: current) else { return raw }
+        do {
+            guard let updated = try await TokenRefresh.refresh(
+                kind: kind, raw: raw, transport: transport, now: current
+            ) else { return raw }
+            try tokens.save(kind: kind, raw: updated)
+            return updated
+        } catch {
+            return raw
+        }
+    }
+
+    private func retryAfterRefresh(kind: ProviderKind, raw: String, current: Date) async -> ProviderSnapshot? {
+        do {
+            guard let updated = try await TokenRefresh.refresh(
+                kind: kind, raw: raw, transport: transport, now: current
+            ) else { return nil }
+            try tokens.save(kind: kind, raw: updated)
+            let provider = try makeFetcher(kind: kind, raw: updated, current: current)
+            let usage = try await provider.fetchUsage()
+            return ProviderSnapshot(
+                enabled: true,
+                usage: usage,
+                lastError: nil,
+                lastAttemptAt: current,
+                retryAfterUntil: nil
+            )
+        } catch {
+            return nil
         }
     }
 

@@ -15,6 +15,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lifecycle: SessionLifecycleCoordinator?
     private var notifier: Notifier?
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if services.settings.shareTokensWithIPhone {
+            IPhoneTokenHandoff.sync(enabled: true)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu-bar-less, Dock-less agent app: the only surfaces are the status
         // item and the floating overlay. `LSUIElement` covers the bundled app,

@@ -6,7 +6,7 @@ struct ProviderCard: View {
 
     @Environment(RefreshController.self) private var refresh
     @State private var enabled: Bool
-    @State private var paste: String = ""
+    @State private var showingSignIn = false
     @State private var saveFailed = false
 
     init(kind: ProviderKind) {
@@ -15,15 +15,15 @@ struct ProviderCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: ProviderChrome.symbolName(kind))
-                    .frame(width: 18, height: 14)
-                    .foregroundStyle(.secondary)
+                ProviderLogo(kind: kind)
+                    .frame(width: 22, height: 22)
+                    .foregroundStyle(.primary)
                 Text(ProviderChrome.title(kind))
-                    .font(.body)
+                    .font(.headline)
                 Spacer(minLength: 8)
-                Toggle("Enabled", isOn: $enabled)
+                Toggle("Show in widgets", isOn: $enabled)
                     .labelsHidden()
                     .onChange(of: enabled) { _, value in
                         EnabledSettings.set(value, kind: kind)
@@ -31,55 +31,47 @@ struct ProviderCard: View {
                     }
             }
 
-            HStack(spacing: 8) {
-                SecureField("Token or CLI JSON", text: $paste)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .textContentType(.none)
-                    .submitLabel(.done)
-                    .onSubmit {
-                        Task { await submitPaste() }
-                    }
-                    .onChange(of: paste) { _, _ in
-                        saveFailed = false
-                    }
-                Button("Save") {
-                    Task { await submitPaste() }
+            if let usage = refresh.snapshot[kind].usage {
+                VStack(alignment: .leading, spacing: 4) {
+                    windowLines(usage: usage)
+                    Text(usage.fetchedAt, style: .relative)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .disabled(paste.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .opacity(refresh.snapshot[kind].lastError != nil ? 0.6 : 1)
             }
 
-            Text(saveFailed ? "Couldn't save token" : ProviderChrome.credentialsCaption(kind))
-                .font(.caption)
-                .foregroundStyle(saveFailed ? .red : .secondary)
+            if let error = refresh.snapshot[kind].lastError, enabled, refresh.snapshot[kind].usage == nil {
+                Text(ProviderChrome.errorText(error, kind: kind))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
 
-            statusSection
+            Button {
+                showingSignIn = true
+            } label: {
+                Text(refresh.snapshot[kind].usage == nil ? "Sign in" : "Sign in again")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+
+            if saveFailed {
+                Text("Couldn’t save the token on this phone.")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .onAppear {
-            enabled = EnabledSettings.isEnabled(kind)
+        .onAppear { enabled = EnabledSettings.isEnabled(kind) }
+        .onChange(of: refresh.snapshot[kind].enabled) { _, value in
+            enabled = value
         }
-    }
-
-    @ViewBuilder
-    private var statusSection: some View {
-        let slot = refresh.snapshot[kind]
-        if let usage = slot.usage {
-            VStack(alignment: .leading, spacing: 4) {
-                windowLines(usage: usage)
-                Text(usage.fetchedAt, style: .relative)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        .sheet(isPresented: $showingSignIn) {
+            SignInSheet(kind: kind) { raw in
+                Task { await saveRaw(raw) }
             }
-            .opacity(slot.lastError != nil ? 0.6 : 1)
-        } else if let error = slot.lastError, enabled {
-            Text(ProviderChrome.errorText(error))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        } else if enabled {
-            windowLines(usage: nil)
         }
     }
 
@@ -92,19 +84,11 @@ struct ProviderCard: View {
         }
     }
 
-    private func submitPaste() async {
-        let raw = paste.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return }
+    private func saveRaw(_ raw: String) async {
         do {
-            switch kind {
-            case .claude: _ = try TokenParsing.claude(raw)
-            case .codex: _ = try TokenParsing.codex(raw)
-            case .grok: _ = try TokenParsing.grok(raw)
-            }
             try KeychainTokenStore().save(kind: kind, raw: raw)
             EnabledSettings.set(true, kind: kind)
             enabled = true
-            paste = ""
             saveFailed = false
             await refresh.refreshNow()
         } catch {

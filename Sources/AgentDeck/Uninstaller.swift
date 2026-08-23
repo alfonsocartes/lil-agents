@@ -28,6 +28,10 @@ enum Uninstaller {
     static func performUninstall() {
         var issues: [String] = []
 
+        Task { @MainActor in
+            IPhoneTokenHandoff.sync(enabled: false)
+        }
+
         do {
             try HookInstaller.uninstall()
         } catch {

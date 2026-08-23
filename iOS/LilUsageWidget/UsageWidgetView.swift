@@ -12,7 +12,8 @@ struct ProviderUsageBody: View {
         VStack(alignment: .leading, spacing: 4) {
             if showsTitle {
                 HStack(spacing: 6) {
-                    Image(systemName: ProviderChrome.symbolName(kind))
+                    ProviderLogo(kind: kind)
+                        .frame(width: 12, height: 12)
                     Text(ProviderChrome.title(kind))
                         .fontWeight(.medium)
                 }
@@ -35,7 +36,7 @@ struct ProviderUsageBody: View {
                 )
             }
         } else if let error = snapshot.lastError {
-            Text(ProviderChrome.errorText(error))
+            Text(ProviderChrome.errorText(error, kind: kind))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else {

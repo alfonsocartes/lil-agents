@@ -3,8 +3,8 @@ import UsageCore
 
 enum ProviderChoice: String, AppEnum {
     case claude
-    case grok
     case codex
+    case grok
 
     static var typeDisplayRepresentation: TypeDisplayRepresentation { "Provider" }
 
