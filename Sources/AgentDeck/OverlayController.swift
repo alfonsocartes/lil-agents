@@ -68,7 +68,8 @@ final class OverlayController {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.wantsVisible else { return }
-                self.panel?.present()
+                // Rejoin in place — present() would re-home onto NSScreen.main.
+                self.panel?.rejoinSpaces()
                 self.syncVisibility()
                 if let panel = self.panel {
                     NSLog("AgentDeck overlay space change: visible=\(panel.isVisible) onActiveSpace=\(panel.isOnActiveSpace) frame=\(NSStringFromRect(panel.frame))")

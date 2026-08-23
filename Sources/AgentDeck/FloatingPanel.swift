@@ -80,6 +80,16 @@ final class FloatingPanel<Content: View>: NSPanel {
         setFrameOrigin(NSPoint(x: x, y: y))
     }
 
+    /// Re-assert Space membership without moving the frame.
+    func rejoinSpaces() {
+        applyOverlayBehavior()
+        orderFrontRegardless()
+        if !isOnActiveSpace {
+            applyOverlayBehavior()
+            orderFrontRegardless()
+        }
+    }
+
     /// Orders the panel front, re-deriving everything that can have gone
     /// stale while it was hidden. This is the single entry point for showing
     /// the panel — see `OverlayPlacement`'s doc comment for the full story
@@ -87,11 +97,10 @@ final class FloatingPanel<Content: View>: NSPanel {
     /// enough: the frame can drift off-screen while hidden, and the panel's
     /// Space membership can be silently dropped by the window server across
     /// full-screen transitions and display reconfiguration.
+    ///
+    /// Space-change re-assertion without moving the frame is `rejoinSpaces()`.
     func present() {
-        // Don't assign `[]` first — that's Default and ejects the window from
-        // the current fullscreen Space.
-        level = .screenSaver
-        collectionBehavior = Self.overlayBehavior
+        applyOverlayBehavior()
 
         if let activeScreen = FloatingPanel.currentScreen() {
             let resolved = OverlayPlacement.resolvedFrame(
@@ -109,10 +118,16 @@ final class FloatingPanel<Content: View>: NSPanel {
         orderFrontRegardless()
 
         if !isOnActiveSpace {
-            level = .screenSaver
-            collectionBehavior = Self.overlayBehavior
+            applyOverlayBehavior()
             orderFrontRegardless()
         }
+    }
+
+    private func applyOverlayBehavior() {
+        // Don't assign `[]` first — that's Default and ejects the window from
+        // the current fullscreen Space.
+        level = .screenSaver
+        collectionBehavior = Self.overlayBehavior
     }
 
     /// Pulls the panel back onto a live screen after a display arrangement
