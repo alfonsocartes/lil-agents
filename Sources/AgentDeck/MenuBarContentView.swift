@@ -379,7 +379,7 @@ private extension Session {
             id: id,
             tool: tool,
             status: status,
-            cwd: "/Users/alfonso/Developer/\(project)",
+            cwd: "/Users/dev/Projects/\(project)",
             tty: nil,
             lastUpdate: Date().addingTimeInterval(-minutesAgo * 60)
         )
@@ -426,9 +426,9 @@ private func previewMenu(sessions: [Session], awake: Bool) -> some View {
 #Preview("Menu — with sessions") {
     previewMenu(
         sessions: [
-            .sample(id: "1", tool: .claude, status: .working, project: "ai-sessions", minutesAgo: 2),
-            .sample(id: "2", tool: .codex, status: .idle, project: "wandity-site", minutesAgo: 14),
-            .sample(id: "3", tool: .claude, status: .waitingApproval, project: "menu-redesign", minutesAgo: 1),
+            .sample(id: "1", tool: .claude, status: .working, project: "marketplace", minutesAgo: 2),
+            .sample(id: "2", tool: .codex, status: .idle, project: "docs", minutesAgo: 14),
+            .sample(id: "3", tool: .claude, status: .waitingApproval, project: "tools", minutesAgo: 1),
         ],
         awake: true
     )

@@ -2,39 +2,50 @@
   <img src="assets/lil-agents-icon.png" alt="lil agents — live status overlay for Claude Code, Codex CLI, and Grok CLI sessions" width="128" />
 </p>
 
-<h1 align="center">lil agents</h1>
+<h1 align="center">lil agents · lil usage</h1>
 
-<p align="center">A live status overlay for Claude Code, Codex CLI &amp; Grok CLI sessions on macOS.</p>
+<p align="center">A live status overlay for Claude Code, Codex CLI &amp; Grok CLI sessions on macOS, plus Home Screen widgets for weekly usage on iPhone.</p>
 
 ---
 
 **Stop alt-tabbing to check if your AI coding agent is done.** `lil agents` (aka **AgentDeck**) is a tiny, native macOS menu-bar app that shows the live status of every [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [OpenAI Codex CLI](https://developers.openai.com/codex/), and [Grok CLI](https://x.ai) session in an always-on-top overlay — working, idle, or waiting for you — and lets you jump straight to the terminal pane that needs attention.
 
+**lil usage** is the iPhone companion in the same repo: a host app and Home Screen widgets for Claude, Codex, and Grok weekly usage. Sign in on the phone, or optionally copy CLI tokens from the Mac.
+
 > Built for developers running **multiple AI agents in parallel** across terminal tabs and windows. One glance tells you which session is blocked on a permission prompt, which finished its turn, and which is still crunching.
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-black)
+![iOS](https://img.shields.io/badge/iOS-18%2B-black)
 ![Swift](https://img.shields.io/badge/Swift-6.2-orange)
 ![UI](https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Release](https://img.shields.io/github/v/release/alfonsocartes/lil-agents?color=brightgreen)
 
 <p align="center">
-  <img src="assets/overlay-screenshot.png" alt="lil agents floating overlay showing three live Claude Code sessions with green traffic-light status dots" width="280" />
+  <img src="assets/overlay-screenshot.png" alt="lil agents floating overlay with usage gauges and three live sessions" width="280" />
   &nbsp;&nbsp;
-  <img src="assets/menu-screenshot.png" alt="lil agents menu bar menu with session list, per-session status and agent, jump-to-pane arrows, stay awake toggle, settings, and overlay hotkey" width="300" />
+  <img src="assets/menu-screenshot.png" alt="lil agents menu bar menu with usage, session list, and stay-awake off" width="300" />
 </p>
 
-<p align="center"><sub>The always-on-top overlay (left) — compact by default, revealing which agent owns a row on hover — and the menu-bar menu (right), with per-session status, agent, and last-update time.</sub></p>
+<p align="center"><sub>The always-on-top overlay (left) — compact by default, with opt-in weekly usage gauges above the session list — and the menu-bar menu (right), with usage, per-session status, agent, and last-update time.</sub></p>
 
 <p align="center">
-  <img src="assets/settings-screenshot.png" alt="lil agents settings window with notification toggles for needs-approval and finished-turn alerts, sound, and an uninstall button" width="380" />
+  <img src="assets/settings-screenshot.png" alt="lil agents settings window with launch at login, sessions, AI usage, and Send tokens to iPhone" width="380" />
 </p>
 
-<p align="center"><sub>Settings — choose which states alert you, whether they play a sound, and uninstall cleanly.</sub></p>
+<p align="center"><sub>Settings — launch at login, which states alert you, background agents, opt-in AI usage, Send tokens to iPhone, and uninstall.</sub></p>
+
+<p align="center">
+  <img src="assets/usage-app-screenshot.png" alt="lil usage iPhone host app with Claude, Codex, and Grok usage" width="240" />
+  &nbsp;&nbsp;
+  <img src="assets/usage-widget-screenshot.png" alt="lil usage Home Screen widgets for Claude, Codex, and Grok weekly usage" width="240" />
+</p>
+
+<p align="center"><sub>lil usage on iPhone — the host app (left) and Home Screen widgets (right).</sub></p>
 
 ---
 
-## Why lil agents?
+## lil agents
 
 When you drive several coding agents at once, they spend most of their time out of sight — in a background tab, another window, or a pane you scrolled away from. You end up context-switching constantly just to check "is it waiting on me yet?"
 
@@ -46,13 +57,14 @@ When you drive several coding agents at once, they spend most of their time out 
 
 Click any session and it **jumps to the exact terminal pane that owns it** — across iTerm2, Terminal.app, WezTerm, and tmux — no more hunting through windows. And if you'd rather be told than glance, it can post a **Notification Center alert** (with optional sound) the moment a session needs you.
 
-## Features
+### Features
 
 - **Real-time agent monitoring** — tracks Claude Code, Codex CLI, and Grok CLI sessions as they start, work, prompt, and finish.
 - **Automatic session cleanup** — removes a session when its CLI process exits (including terminal tab, pane, or window closure) and replaces the old row when `/clear`, `/new`, or another in-process reset starts a new lifecycle. A detached tmux session stays visible while its agent is still alive.
 - **Floating overlay** — a compact, translucent, always-on-top list of live sessions; hover a row to reveal which agent owns it. Toggle it anywhere with a global hotkey (**⌥⌘J**).
 - **Menu bar status icon** — the menu-bar glyph changes color to reflect the most attention-worthy session (red → yellow → green), so you know the state without even opening the overlay. When usage tracking is on, weekly percent for each enabled provider sits next to it.
-- **Opt-in usage gauges** — Settings toggles for Claude, Codex, and Grok. Off by default. The menu bar and overlay show **weekly** usage; the dropdown also shows Claude's 5-hour window. Grok's number is the same weekly limit as `/usage` in the TUI.
+- **Opt-in usage gauges** — Settings toggles for Claude, Codex, and Grok. Off by default. The overlay and menu-bar icon show Claude's **5-hour** window and Codex/Grok **weekly**; the dropdown also lists Claude's weekly window. Grok's weekly number is the same limit as `/usage` in the TUI.
+- **Send tokens to iPhone** — optional. Settings → **Send tokens to iPhone** copies those same CLI sign-ins into iCloud Keychain so **lil usage** on your iPhone can use them. Same Apple ID, iCloud Keychain on, on this Mac and the phone. Can take a minute. Off by default. The iPhone app still works without this — tap Sign in there.
 - **One-click jump to terminal** — click a session (in the overlay or the menu) to focus the exact pane that owns it. Precise focus for **iTerm2, Terminal.app, WezTerm, and tmux** (matched by controlling TTY / pane id); **Ghostty** gets precise split focus too via its AppleScript API (working-directory match on 1.3.0+, exact TTY match on 1.4.0+/tip), falling back to bringing the app forward on older builds.
 - **Notification Center alerts** — optionally get a banner (and sound) the instant a session goes **🔴 needs-approval** or **🟡 finished-its-turn**. Fires once per transition; tap the alert to jump straight to that pane. Fully configurable in **Settings** (which states, sound, on/off).
 - **Project-aware labels** — each session is labeled by its working-directory name, so you can tell your repos apart at a glance.
@@ -61,7 +73,7 @@ Click any session and it **jumps to the exact terminal pane that owns it** — a
 - **Private by design** — everything is local. Events are sent over **loopback only** (`127.0.0.1:54173`), never your LAN, never the internet.
 - **Native & lightweight** — pure Swift 6, SwiftUI + AppKit, no Electron, no bundled runtime. Dock-less and unobtrusive (`LSUIElement`).
 
-## How it works
+### How it works
 
 `lil agents` installs small **lifecycle hooks** into the CLIs you already use:
 
@@ -83,14 +95,14 @@ Claude Code / Codex CLI / Grok CLI
 
 Existing hooks from other tools and plugins are preserved — the installer only ever adds or removes its own entries.
 
-## Requirements
+### Requirements
 
 - **macOS 26 or later**
 - **Swift 6.2 toolchain** (Xcode 26+) to build from source
 - A supported terminal for click-to-jump — **[iTerm2](https://iterm2.com/)**, **Terminal.app**, **[WezTerm](https://wezterm.org/)**, or **[tmux](https://github.com/tmux/tmux)** for precise pane focus (**[Ghostty](https://ghostty.org/)** 1.3.0+ also gets precise split focus via its AppleScript API; older Ghostty falls back to app-activate). Sessions are still *tracked* in any terminal — this only affects jump-to-pane.
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)**, **[Codex CLI](https://developers.openai.com/codex/)**, and/or **[Grok CLI](https://x.ai)** installed — whichever agents you want to monitor
 
-## Download & Install
+### Download & Install
 
 The easiest way to get `lil agents` is a signed, notarized build from the [Releases page](https://github.com/alfonsocartes/lil-agents/releases):
 
@@ -102,13 +114,67 @@ Releases are signed with a Developer ID certificate and notarized by Apple, so m
 
 `lil agents` has no Dock icon and no main window; look for it in the **menu bar**.
 
-## Updating
+### Updating
 
 `lil agents` checks for updates automatically in the background via [Sparkle](https://sparkle-project.org/) and will prompt you when a new version is ready to install.
 
 To check manually: menu bar → **Check for Updates…**
 
+### Usage
+
+| Action | How |
+| --- | --- |
+| Show / hide the overlay | Global hotkey **⌥⌘J**, or the menu-bar menu |
+| Jump to a session's terminal | Click the session row (overlay) or menu item, or tap its notification |
+| Configure notifications | Menu bar → **Settings…** (**⌘,**) |
+| Launch at login | Settings → **Launch at login** |
+| Show weekly usage | Settings → **AI usage** (Claude / Codex / Grok, off by default) |
+| Send tokens to iPhone | Settings → **Send tokens to iPhone** (off by default) |
+| Keep Mac awake with lid closed | Menu bar → **Stay awake (lid closed)** |
+| Quit | Menu bar → **Quit lil agents** (**⌘Q**) |
+
+Status at a glance:
+
+| Dot | Meaning |
+| --- | --- |
+| 🟢 Green | Working — running a tool or thinking |
+| 🟡 Yellow | Idle — finished its turn, waiting for your prompt |
+| 🔴 Red | Needs input — blocked on a permission/approval prompt |
+
+## lil usage
+
+`lil usage` is an iPhone app plus Home Screen widgets for **Claude**, **Codex**, and **Grok** weekly usage. Claude also shows its 5-hour window. Same repo as `lil agents`; it is not a Mac extra.
+
+Sign in on the phone — Safari for Claude, device-code for Codex and Grok. Tokens live in the app's Keychain.
+
+Optional: on the Mac, Settings → **Send tokens to iPhone** copies the CLI sign-ins into iCloud Keychain. Same Apple ID, iCloud Keychain on, on this Mac and the phone. Can take a minute. The iPhone app works without this.
+
+### Widgets
+
+- **Stack** — every signed-in provider.
+- **Provider** — one provider. Touch and hold the widget, tap **Edit Widget**, and pick Claude, Codex, or Grok.
+
+Add them: touch and hold the Home Screen → **Edit** → **Add Widget** → search **lil usage**.
+
+### Build & run
+
+Not on the App Store yet. Source-build only.
+
+Open `iOS/LilUsage.xcodeproj` in Xcode 26+ (iOS 18+). If you change targets, regenerate the project with [XcodeGen](https://github.com/yonaskolb/XcodeGen) from `iOS/project.yml`.
+
+Forkers must set their own `DEVELOPMENT_TEAM` (currently `S74M2P6469` in `iOS/project.yml` and `iOS/LilUsage.xcodeproj/project.pbxproj`). App Group `group.com.wandity.lilagents` and the Keychain access group (`$(AppIdentifierPrefix)group.com.wandity.lilagents`) must stay in lockstep across the app and the widget.
+
+## Privacy & security
+
+- **Loopback only.** Session events stay on `127.0.0.1:54173`. The listener is never exposed to the network.
+- **No product telemetry.** There is no analytics, no account, no cloud of ours.
+- **Usage is opt-in.** Session tracking never leaves the machine. On the Mac, **Settings → AI usage** reads that CLI's local sign-in and asks Anthropic, OpenAI, or xAI for your current usage. Off by default. On the iPhone, usage uses tokens from **Sign in** on the phone or from the Mac's iCloud Keychain share.
+- **Tokens stay in Keychain.** iCloud Keychain share is an explicit Mac toggle (**Settings → Send tokens to iPhone**), off by default.
+- **Non-destructive config edits.** Existing hooks are backed up and merged; uninstall removes only what `lil agents` added (`~/.grok/hooks/agentdeck.json` is deleted whole because that file is ours).
+
 ## Install & build
+
+### macOS (`lil agents`)
 
 To build from source instead of downloading a release, clone and build the `.app` with the included script:
 
@@ -135,31 +201,13 @@ On first launch, use the app's install action to wire up the CLI hooks, then sta
 
 > **First-run permissions:** macOS will show a one-time **Automation** prompt so the app can control your terminal when you jump to a pane. Local source builds are ad-hoc code-signed (release downloads are Developer ID signed and notarized), which is enough for this grant to persist across launches.
 
-## Usage
+### iOS (`lil usage`)
 
-| Action | How |
-| --- | --- |
-| Show / hide the overlay | Global hotkey **⌥⌘J**, or the menu-bar menu |
-| Jump to a session's terminal | Click the session row (overlay) or menu item, or tap its notification |
-| Configure notifications | Menu bar → **Settings…** (**⌘,**) |
-| Show weekly usage | Settings → **AI usage** (Claude / Codex / Grok, off by default) |
-| Keep Mac awake with lid closed | Menu bar → **Stay awake (lid closed)** |
-| Quit | Menu bar → **Quit lil agents** (**⌘Q**) |
+```bash
+open iOS/LilUsage.xcodeproj
+```
 
-Status at a glance:
-
-| Dot | Meaning |
-| --- | --- |
-| 🟢 Green | Working — running a tool or thinking |
-| 🟡 Yellow | Idle — finished its turn, waiting for your prompt |
-| 🔴 Red | Needs input — blocked on a permission/approval prompt |
-
-## Privacy & security
-
-- **Loopback only.** Session events stay on `127.0.0.1`. The listener is never exposed to the network.
-- **No product telemetry.** There is no analytics, no account, no cloud of ours.
-- **Usage is opt-in.** Session tracking never leaves the machine. If you turn on **Settings → AI usage**, the app reads that CLI's local sign-in and asks Anthropic, OpenAI, or xAI for your current usage. Off by default.
-- **Non-destructive config edits.** Existing hooks are backed up and merged; uninstall removes only what `lil agents` added (`~/.grok/hooks/agentdeck.json` is deleted whole because that file is ours).
+Xcode 26+, iOS 18+. If you change targets, regenerate with XcodeGen from `iOS/project.yml`. There is no iOS release disk image; source-build only for now. See [lil usage](#lil-usage) for the team ID and App Group.
 
 ## Uninstalling
 
@@ -169,6 +217,7 @@ This removes everything `lil agents` added to your system:
 
 - Its hook entries from `~/.claude/settings.json` and `~/.codex/hooks.json` (existing entries from other tools are left untouched), and `~/.grok/hooks/agentdeck.json`
 - The generated forwarder scripts
+- The launch-at-login item, if it was enabled
 - The **stay awake (lid closed)** `sudoers` rule, if it was ever enabled
 - Its other support files (logs, generated config, etc.)
 
@@ -176,7 +225,7 @@ It then reveals **lil agents.app** in Finder so you can drag it to the Trash you
 
 ## Tech stack
 
-Swift 6 · SwiftUI · AppKit · Network.framework (embedded loopback listener) · UserNotifications · Carbon global hotkey · AppleScript/osascript + CLI (iTerm2 / Terminal.app / WezTerm / tmux / Ghostty automation) · Sparkle (auto-updates) · SwiftPM.
+Swift 6 · SwiftUI · AppKit · WidgetKit · UsageCore · Network.framework (embedded loopback listener) · UserNotifications · Carbon global hotkey · AppleScript/osascript + CLI (iTerm2 / Terminal.app / WezTerm / tmux / Ghostty automation) · Sparkle (auto-updates) · SwiftPM.
 
 ## Releasing (maintainer)
 
@@ -204,7 +253,7 @@ The workflow needs the following repository secrets configured under **Settings 
 
 - Per-session elapsed-time and turn counts
 
-Contributions and issues welcome.
+Contributions and issues welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
@@ -212,4 +261,4 @@ Released under the [MIT License](LICENSE). © 2026 Wandity Ltd.
 
 ---
 
-<sub>**Keywords:** Claude Code monitor · Codex CLI status · Grok CLI status · Grok usage · AI coding agent dashboard · macOS menu bar app · terminal session overlay · parallel AI agents · iTerm2 jump-to-pane · Claude Code hooks · Codex hooks · Grok hooks · agent session tracker · SwiftUI menu bar app.</sub>
+<sub>**Keywords:** Claude Code monitor · Codex CLI status · Grok CLI status · Grok usage · Claude usage · Codex usage · iOS usage widgets · Home Screen widgets · AI coding agent dashboard · macOS menu bar app · terminal session overlay · parallel AI agents · iTerm2 jump-to-pane · Claude Code hooks · Codex hooks · Grok hooks · agent session tracker · SwiftUI menu bar app.</sub>

@@ -10,7 +10,7 @@ extension Array where Element == Session {
     /// The store's own `sessions` array is status-sorted and recency-sorted,
     /// which makes rows jump around every time a session changes state or
     /// receives a heartbeat. For a glanceable ambient surface that's hostile:
-    /// the user builds spatial memory ("ai-sessions is the second row") and a
+    /// the user builds spatial memory ("marketplace is the second row") and a
     /// reshuffle breaks it mid-glance — or worse, mid-click. Every key used
     /// here is fixed for the life of a session, so a row can never move once
     /// it exists; combined with `ForEach`'s `session.id` identity, SwiftUI
@@ -414,21 +414,21 @@ private func previewUsageStore() -> UsageStore {
             // shows "1h"
             // at rest; the working one shows nothing.
             overlaySample(id: "b", tool: .claude, status: .working,
-                          cwd: "/Users/alfonso/Developer/p2-marketplace", minutesAgo: 2),
+                          cwd: "/Users/dev/Projects/marketplace", minutesAgo: 2),
             overlaySample(id: "a", tool: .codex, status: .waitingApproval,
-                          cwd: "/Users/alfonso/Developer/p2-marketplace", minutesAgo: 75),
+                          cwd: "/Users/dev/Projects/marketplace", minutesAgo: 75),
             // A lone idle session — waiting on the user, so its "14m" shows
             // at rest; hover swaps in tool + elapsed.
             overlaySample(id: "c", tool: .claude, status: .idle,
-                          cwd: "/Users/alfonso/Developer/Tools/ai-sessions", minutesAgo: 14),
+                          cwd: "/Users/dev/Projects/docs", minutesAgo: 14),
             // A fresh lone session — working, so no rest caption regardless
             // of age; hover shows just the tool ("now" suppressed).
             overlaySample(id: "d", tool: .codex, status: .working,
-                          cwd: "/Users/alfonso/Developer/wandity-site", minutesAgo: 0),
+                          cwd: "/Users/dev/Projects/site", minutesAgo: 0),
             // A long-named idle session — the rest caption must win the
             // width fight and the name must tail-truncate around it.
             overlaySample(id: "e", tool: .claude, status: .idle,
-                          cwd: "/Users/alfonso/Developer/extremely-long-project-name-for-truncation",
+                          cwd: "/Users/dev/Projects/extremely-long-project-name-for-truncation",
                           minutesAgo: 42),
         ]),
         usage: previewUsageStore()
