@@ -8,4 +8,17 @@ import Testing
         #expect(IPhoneTokenHandoff.service("grok") == "com.wandity.lilagents.token.grok")
         #expect(IPhoneTokenHandoff.service("codex") == "com.wandity.lilagents.token.codex")
     }
+
+    @Test func disableDoesNotDelete() {
+        #expect(IPhoneTokenHandoff.action(enabled: false, cliBlob: "x") == .skip)
+    }
+
+    @Test func missingCLIBlobDoesNotDelete() {
+        #expect(IPhoneTokenHandoff.action(enabled: true, cliBlob: nil) == .skip)
+        #expect(IPhoneTokenHandoff.action(enabled: true, cliBlob: "") == .skip)
+    }
+
+    @Test func presentCLIBlobUpserts() {
+        #expect(IPhoneTokenHandoff.action(enabled: true, cliBlob: "{\"a\":1}") == .upsert("{\"a\":1}"))
+    }
 }

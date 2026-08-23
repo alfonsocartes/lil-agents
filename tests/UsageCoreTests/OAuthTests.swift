@@ -147,4 +147,23 @@ import Testing
         #expect(session.refreshToken == "r")
         #expect(TokenRefresh.needsRefresh(kind: .claude, raw: blob, now: fixedNow.addingTimeInterval(1)))
     }
+
+    @Test func grokMapBlobYieldsRefreshToken() throws {
+        let expires = fixedNow.addingTimeInterval(3600)
+        let blob = CredentialBlob.grok(OAuthTokens(accessToken: "a", refreshToken: "gref", expiresAt: expires))
+        let session = try TokenRefresh.refreshable(kind: .grok, raw: blob)
+        #expect(session.refreshToken == "gref")
+        #expect(TokenRefresh.needsRefresh(kind: .grok, raw: blob, now: expires))
+    }
+
+    @Test func grokMapUnexpiredEntryWinsForRefreshToken() throws {
+        let raw = """
+        {
+          "https://auth.x.ai::old": {"key": "old", "expires_at": "2023-01-01T00:00:00Z", "refresh_token": "r-old"},
+          "https://auth.x.ai::fresh": {"key": "fresh", "expires_at": "2024-01-01T00:00:00Z", "refresh_token": "r-fresh"}
+        }
+        """
+        let session = try TokenRefresh.refreshable(kind: .grok, raw: raw, now: fixedNow)
+        #expect(session.refreshToken == "r-fresh")
+    }
 }

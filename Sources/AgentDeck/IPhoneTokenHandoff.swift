@@ -10,26 +10,34 @@ enum IPhoneTokenHandoff {
 
     @MainActor static var lastError: String?
 
+    enum SyncAction: Equatable {
+        case skip
+        case upsert(String)
+    }
+
     static func service(_ name: String) -> String {
         "com.wandity.lilagents.token.\(name)"
+    }
+
+    /// iPhone sign-in uses these same items; disable/uninstall must not wipe them.
+    static func action(enabled: Bool, cliBlob: String?) -> SyncAction {
+        guard enabled, let cliBlob, !cliBlob.isEmpty else { return .skip }
+        return .upsert(cliBlob)
     }
 
     @MainActor
     static func sync(enabled: Bool) {
         lastError = nil
         for name in ["claude", "grok", "codex"] {
-            if !enabled {
-                delete(name)
+            switch action(enabled: enabled, cliBlob: readCLIBlob(name)) {
+            case .skip:
                 continue
-            }
-            guard let raw = readCLIBlob(name), !raw.isEmpty else {
-                delete(name)
-                continue
-            }
-            do {
-                try save(name, raw: raw)
-            } catch {
-                lastError = "Couldn’t write to iCloud Keychain. Use a signed lil agents build (not `swift run`) and turn on iCloud Keychain for this Mac."
+            case .upsert(let raw):
+                do {
+                    try save(name, raw: raw)
+                } catch {
+                    lastError = "Couldn’t write to iCloud Keychain. Use a signed lil agents build (not `swift run`) and turn on iCloud Keychain for this Mac."
+                }
             }
         }
     }
@@ -82,19 +90,17 @@ enum IPhoneTokenHandoff {
     }
 
     private static func save(_ name: String, raw: String) throws {
-        delete(name)
-        var query = baseQuery(name)
-        query[kSecValueData as String] = Data(raw.utf8)
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else { throw KeychainWriteError(status: status) }
-    }
-
-    private static func delete(_ name: String) {
-        _ = SecItemDelete(baseQuery(name) as CFDictionary)
-        var unsynced = baseQuery(name)
-        unsynced[kSecAttrSynchronizable as String] = false
-        _ = SecItemDelete(unsynced as CFDictionary)
+        let query = baseQuery(name)
+        let attributes: [String: Any] = [kSecValueData as String: Data(raw.utf8)]
+        let updated = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updated == errSecSuccess { return }
+        // A failed add after delete-first used to leave the iPhone item gone.
+        guard updated == errSecItemNotFound else { throw KeychainWriteError(status: updated) }
+        var add = query
+        add[kSecValueData as String] = Data(raw.utf8)
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        let added = SecItemAdd(add as CFDictionary, nil)
+        guard added == errSecSuccess else { throw KeychainWriteError(status: added) }
     }
 
     private static func baseQuery(_ name: String) -> [String: Any] {
