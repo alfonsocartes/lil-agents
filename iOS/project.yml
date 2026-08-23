@@ -11,6 +11,7 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "18.0"
     TARGETED_DEVICE_FAMILY: "1,2"
     CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: S74M2P6469
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
     MARKETING_VERSION: "1.0"
@@ -27,6 +28,7 @@ targets:
         type: group
     settings:
       base:
+        DEVELOPMENT_TEAM: S74M2P6469
         PRODUCT_BUNDLE_IDENTIFIER: com.wandity.lilagents.core
         PRODUCT_NAME: UsageCore
         PRODUCT_MODULE_NAME: UsageCore
@@ -43,6 +45,7 @@ targets:
     sources:
       - path: LilUsage
       - path: Shared
+      - path: Assets.xcassets
     dependencies:
       - target: UsageCore
         embed: true
@@ -54,13 +57,14 @@ targets:
       - sdk: BackgroundTasks.framework
     settings:
       base:
+        DEVELOPMENT_TEAM: S74M2P6469
         PRODUCT_BUNDLE_IDENTIFIER: com.wandity.lilagents
         PRODUCT_NAME: LilUsage
         PRODUCT_MODULE_NAME: LilUsage
         GENERATE_INFOPLIST_FILE: "NO"
         INFOPLIST_FILE: LilUsage/Info.plist
         CODE_SIGN_ENTITLEMENTS: LilUsage/LilUsage.entitlements
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
         TARGETED_DEVICE_FAMILY: "1,2"
     scheme:
@@ -72,6 +76,7 @@ targets:
     sources:
       - path: LilUsageWidget
       - path: Shared
+      - path: Assets.xcassets
     dependencies:
       - target: UsageCore
         embed: true
@@ -81,6 +86,7 @@ targets:
       - sdk: AppIntents.framework
     settings:
       base:
+        DEVELOPMENT_TEAM: S74M2P6469
         PRODUCT_BUNDLE_IDENTIFIER: com.wandity.lilagents.widget
         PRODUCT_NAME: LilUsageWidget
         PRODUCT_MODULE_NAME: LilUsageWidget
