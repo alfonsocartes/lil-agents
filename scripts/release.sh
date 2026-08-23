@@ -87,8 +87,12 @@ echo "==> Stamping CFBundleShortVersionString=${VERSION} CFBundleVersion=${BUILD
 #
 # Installer.xpc gets none. Downloader.xpc must keep its own entitlements,
 # which is why it's the only nested item signed with
-# --preserve-metadata=entitlements. The outer app now has keychain-access-groups
-# so it can write iCloud Keychain items for the iPhone app.
+# --preserve-metadata=entitlements.
+#
+# Do not pass packaging/AgentDeck.entitlements here. keychain-access-groups
+# without a Developer ID provisioning profile makes launchd refuse to spawn
+# the app (POSIX 163, "can't be opened") — that shipped in 0.9.0. Mac →
+# iPhone Keychain share waits until the profile is embedded.
 # ---------------------------------------------------------------------------
 echo "==> Re-signing with Developer ID: ${APPLE_DEVELOPER_ID}"
 
@@ -106,7 +110,6 @@ codesign -f -s "$APPLE_DEVELOPER_ID" -o runtime --timestamp \
 codesign -f -s "$APPLE_DEVELOPER_ID" -o runtime --timestamp \
     "$FW"
 codesign -f -s "$APPLE_DEVELOPER_ID" -o runtime --timestamp \
-    --entitlements "$ROOT/packaging/AgentDeck.entitlements" \
     "$APP"
 
 echo "==> Verifying signature"

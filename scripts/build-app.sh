@@ -73,11 +73,9 @@ codesign --force --sign "$CODESIGN_IDENTITY" "$SPARKLE_DIR/Versions/B/Updater.ap
     echo "warning: codesign failed for Updater.app"
 codesign --force --sign "$CODESIGN_IDENTITY" "$SPARKLE_DIR" >/dev/null 2>&1 || \
     echo "warning: codesign failed for Sparkle.framework"
-APP_SIGN=(--force --options runtime --sign "$CODESIGN_IDENTITY")
-if [[ "$CODESIGN_IDENTITY" != "-" ]]; then
-    APP_SIGN+=(--entitlements "$ROOT/packaging/AgentDeck.entitlements")
-fi
-codesign "${APP_SIGN[@]}" "$APP_DIR" >/dev/null 2>&1 || \
+# Don't attach packaging/AgentDeck.entitlements: keychain-access-groups
+# without a Developer ID profile makes launchd refuse to spawn the app.
+codesign --force --options runtime --sign "$CODESIGN_IDENTITY" "$APP_DIR" >/dev/null 2>&1 || \
     codesign --force --sign "$CODESIGN_IDENTITY" "$APP_DIR" >/dev/null 2>&1 || \
     echo "warning: codesign failed (app will still run, but TCC grants may not persist)"
 

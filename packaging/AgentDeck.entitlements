@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Unused in release.sh until a Developer ID profile is embedded.
+	     Signing with only this key bricks launch on macOS 26 (POSIX 163). -->
 	<key>keychain-access-groups</key>
 	<array>
 		<string>S74M2P6469.group.com.wandity.lilagents</string>
