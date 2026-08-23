@@ -7,29 +7,7 @@ enum UsageTimeline {
     static let appURL = URL(string: "lilusage://")!
 
     static func loadAndMaybeRefresh() async -> UsageSnapshot {
-        let store = AppGroup.snapshotStore
-        let settings = EnabledSettings.settings
-        let snapshot = store.load()
-        let now = Date()
-        guard shouldRefresh(snapshot: snapshot, settings: settings, now: now) else {
-            return snapshot
-        }
-        let refresher = UsageRefresher(snapshotStore: store, tokens: KeychainTokenStore())
-        return await refresher.refreshAll(settings: settings)
-    }
-
-    static func shouldRefresh(snapshot: UsageSnapshot, settings: UsageSettings, now: Date) -> Bool {
-        let tokens = KeychainTokenStore()
-        for kind in ProviderKind.allCases {
-            guard isEnabled(kind, settings: settings) else { continue }
-            let raw = try? tokens.load(kind: kind)
-            guard let raw, !raw.isEmpty else { continue }
-            let slot = snapshot[kind]
-            if let retry = slot.retryAfterUntil, now < retry { continue }
-            guard let last = slot.lastAttemptAt else { return true }
-            if now.timeIntervalSince(last) >= interval { return true }
-        }
-        return false
+        AppGroup.snapshotStore.load()
     }
 
     /// Next wake: earliest per-enabled-provider eligibility, so a 429 on Grok
@@ -50,14 +28,6 @@ enum UsageTimeline {
         }
         let soonest = candidates.min() ?? now.addingTimeInterval(interval)
         return max(soonest, now.addingTimeInterval(60))
-    }
-
-    static func isEnabled(_ kind: ProviderKind, settings: UsageSettings) -> Bool {
-        switch kind {
-        case .claude: settings.claudeEnabled
-        case .grok: settings.grokEnabled
-        case .codex: settings.codexEnabled
-        }
     }
 }
 

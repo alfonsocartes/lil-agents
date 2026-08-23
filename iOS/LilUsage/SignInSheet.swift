@@ -17,6 +17,7 @@ struct SignInSheet: View {
     @State private var showingSafari = false
     @State private var copiedCode = false
     @State private var task: Task<Void, Never>?
+    @State private var started = false
 
     private enum Phase: Equatable {
         case idle
@@ -73,7 +74,11 @@ struct SignInSheet: View {
                 case .failed(let message):
                     Text(message)
                         .foregroundStyle(.red)
-                    Button("Try again") { start() }
+                    Button("Try again") {
+                        started = false
+                        phase = .idle
+                        start()
+                    }
                 }
                 Spacer()
             }
@@ -88,7 +93,7 @@ struct SignInSheet: View {
                     }
                 }
             }
-            .onAppear { start() }
+            .task { start() }
             .onDisappear { task?.cancel() }
             .sheet(isPresented: $showingSafari) {
                 if let safariURL {
@@ -101,6 +106,8 @@ struct SignInSheet: View {
     }
 
     private func start() {
+        guard !started else { return }
+        started = true
         task?.cancel()
         switch kind {
         case .claude:
