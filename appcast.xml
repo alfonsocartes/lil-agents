@@ -33,6 +33,18 @@
       </item>
     -->
     <item>
+      <title>0.9.0</title>
+      <pubDate>Sun, 23 Aug 2026 22:30:26 +0000</pubDate>
+      <sparkle:version>68</sparkle:version>
+      <sparkle:shortVersionString>0.9.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <enclosure
+        url="https://github.com/alfonsocartes/lil-agents/releases/download/v0.9.0/lil-agents-0.9.0.zip"
+        length="3667381"
+        type="application/octet-stream"
+        sparkle:edSignature="Ww2wfLHUVx0t49TFR8DT9nSmTCllgk1O0N2x8XxsS+N+WNxmhjnpUKBBxKDSP0hAyOe3JJ/s0zSawjHULNFXAA==" />
+    </item>
+    <item>
       <title>0.8.0</title>
       <pubDate>Sat, 22 Aug 2026 14:53:02 +0000</pubDate>
       <sparkle:version>56</sparkle:version>
