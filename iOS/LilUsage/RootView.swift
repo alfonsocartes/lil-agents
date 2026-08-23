@@ -12,10 +12,10 @@ struct RootView: View {
                     Text("Home Screen widgets for Claude, Codex, and Grok usage. Sign in on this phone.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                    widgetSetupSection
                     ForEach(ProviderKind.allCases, id: \.self) { kind in
                         ProviderCard(kind: kind)
                     }
-                    widgetSetupSection
                 }
                 .padding()
             }
@@ -40,11 +40,17 @@ struct RootView: View {
         case .card:
             WidgetSetupCard { widgetSetupDismissed = true }
         case .link:
-            Button("How to add widgets") {
+            Button {
                 widgetSetupDismissed = false
+            } label: {
+                Label("How to add widgets", systemImage: "widget.small")
+                    .frame(maxWidth: .infinity)
             }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .padding(16)
+            .frame(maxWidth: .infinity)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
     }
 }
