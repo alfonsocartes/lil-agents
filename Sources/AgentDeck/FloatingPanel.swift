@@ -26,6 +26,10 @@ final class FloatingPanel<Content: View>: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
+        // We reuse this panel. The NSWindow default would let a close()
+        // (Escape on a key panel, etc.) tear the window-server connection
+        // while OverlayController still holds the object.
+        isReleasedWhenClosed = false
 
         let hosting = NSHostingView(rootView: content)
         // Let the SwiftUI content drive the window size so the panel hugs the
@@ -34,7 +38,13 @@ final class FloatingPanel<Content: View>: NSPanel {
         contentView = hosting
 
         setFrameAutosaveName("AgentDeckPanel")
-        if frameAutosaveName.isEmpty || frame.origin == .zero {
+        // `frame.origin == .zero` misses a 0-height frame with a real origin
+        // — the autosaved collapsed state. Reset that to the init size so
+        // `positionTopRight` has something displayable to place.
+        if !OverlayPlacement.isDisplayable(frame) {
+            setFrame(NSRect(x: 0, y: 0, width: 260, height: 120), display: false)
+            positionTopRight()
+        } else if frameAutosaveName.isEmpty || frame.origin == .zero {
             positionTopRight()
         }
     }
@@ -59,13 +69,14 @@ final class FloatingPanel<Content: View>: NSPanel {
     /// Space membership can be silently dropped by the window server across
     /// full-screen transitions and display reconfiguration.
     func present() {
-        // A window's Space/level assignment lives in the window server, not
-        // just in these properties — re-applying forces the server to
-        // re-evaluate them rather than trusting whatever it last decided.
-        // Keep the collection behavior IDENTICAL to init's; this is
-        // re-assertion, not reconfiguration.
+        // Assigning the current collectionBehavior is a WindowServer no-op.
+        // Flip to a different value first so Space membership is re-evaluated
+        // (fullscreen / lock / Space change while hidden can otherwise order
+        // the panel front on a Space the user isn't on).
+        let joining: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        collectionBehavior = []
+        collectionBehavior = joining
         level = .floating
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
         if let activeScreen = FloatingPanel.currentScreen() {
             let resolved = OverlayPlacement.resolvedFrame(
@@ -74,13 +85,19 @@ final class FloatingPanel<Content: View>: NSPanel {
                 active: activeScreen.visibleFrame
             )
             if resolved != frame {
-                setFrame(resolved, display: false)
+                setFrame(resolved, display: true)
             }
         }
 
         // `orderFrontRegardless` (not `makeKeyAndOrderFront`) — the overlay must
         // never steal key focus from the terminal underneath.
         orderFrontRegardless()
+
+        if !isOnActiveSpace {
+            collectionBehavior = []
+            collectionBehavior = joining
+            orderFrontRegardless()
+        }
     }
 
     /// Pulls the panel back onto a live screen after a display arrangement

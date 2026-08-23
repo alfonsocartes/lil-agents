@@ -46,10 +46,15 @@ final class HotKeyCenter {
                 &received
             )
             if received.id == center.hotKeyID {
-                // The C callback can't be actor-isolated; `center` is Sendable
-                // (a @MainActor class), so hop explicitly. Task { @MainActor }
-                // preserves the old DispatchQueue.main.async deferred delivery.
-                Task { @MainActor in center.handler?() }
+                // Carbon application-target handlers run on the main thread;
+                // invoke synchronously so an App-Napped accessory app actually
+                // toggles the overlay instead of scheduling an unstructured
+                // Task that may never run. The else branch is defensive.
+                if Thread.isMainThread {
+                    MainActor.assumeIsolated { center.handler?() }
+                } else {
+                    DispatchQueue.main.async { center.handler?() }
+                }
             }
             return noErr
         }, 1, &spec, selfPtr, &eventHandler)

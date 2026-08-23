@@ -9,8 +9,8 @@ import SwiftUI
 /// rebuilds itself on every open. `@Observable isVisible` is push-based, so a
 /// SwiftUI menu can observe it directly.
 ///
-/// The panel is built lazily on first `show()` and exactly once: ordering a
-/// window front while the app delegate is still being constructed is flaky.
+/// The panel is built lazily on first `show()`: ordering a window front
+/// while the app delegate is still being constructed is flaky.
 ///
 /// `show()` re-derives the panel's placement (via `FloatingPanel.present()`,
 /// see `OverlayPlacement`) instead of trusting whatever frame was last
@@ -62,13 +62,23 @@ final class OverlayController {
     }
 
     func show() {
-        let panel = panel ?? makePanel()
+        var panel = panel ?? makePanel()
         self.panel = panel
         // Kick off a refresh every time the overlay is raised, throttled by
         // `refreshIfStale`'s own `lastAttemptAt`/`retryAfterUntil` gates so
         // repeated toggling never spams either provider's API.
         usage.refreshIfStale()
         panel.present()
+        if !isShowingWhereTheUserIs(panel) {
+            // Defense-in-depth for a WindowServer-zombie panel. present() +
+            // resolvedFrame already handle the 0-size autosave case, so the
+            // replacement won't come back 0-height.
+            NSLog("AgentDeck overlay show: visible=\(panel.isVisible) onActiveSpace=\(panel.isOnActiveSpace) frame=\(NSStringFromRect(panel.frame)) screens=\(NSScreen.screens.count)")
+            panel.orderOut(nil)
+            panel = makePanel()
+            self.panel = panel
+            panel.present()
+        }
         syncVisibility()
         // One line of evidence if this ever recurs: whether the panel
         // actually ended up visible/on the active Space, and where.
@@ -81,21 +91,30 @@ final class OverlayController {
     }
 
     func toggle() {
-        // Branch on the panel's REAL state, not the cached flag, so a panel
-        // that's visible-but-not-where-the-user-is (the bug this file
-        // exists to fix) can never invert the menu's "Show/Hide" click into
-        // a hide.
-        if panel?.isVisible == true {
+        // Branch on whether the panel is actually in front of the user, not
+        // `isVisible` alone: a 0-height window or a window on another Space
+        // is "visible" to AppKit, and treating that as showing would invert
+        // Show into Hide.
+        if let panel, isShowingWhereTheUserIs(panel) {
             hide()
         } else {
             show()
         }
     }
 
-    /// Reads `isVisible` back from the panel rather than assuming — the
-    /// panel is the source of truth, not whichever call just ran.
+    /// Reads showing-where-the-user-is back from the panel rather than
+    /// assuming — so the menu says "Show overlay" when the panel isn't
+    /// actually in front of the user.
     private func syncVisibility() {
-        isVisible = panel?.isVisible ?? false
+        isVisible = panel.map { isShowingWhereTheUserIs($0) } ?? false
+    }
+
+    private func isShowingWhereTheUserIs(_ panel: FloatingPanel<OverlayView>) -> Bool {
+        OverlayPlacement.isShowingWhereTheUserIs(
+            isVisible: panel.isVisible,
+            isOnActiveSpace: panel.isOnActiveSpace,
+            frame: panel.frame
+        )
     }
 
     private func makePanel() -> FloatingPanel<OverlayView> {

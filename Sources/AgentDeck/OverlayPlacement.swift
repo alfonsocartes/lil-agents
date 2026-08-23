@@ -30,6 +30,26 @@ import Foundation
 /// involved, so it can be exercised headlessly and exhaustively rather than
 /// only by eyeballing a real panel across real displays.
 enum OverlayPlacement {
+    /// OverlayView's fixed width — a collapsed frame is inflated to at least
+    /// this so SwiftUI has a real layout pass to hug.
+    private static let minimumDisplayableWidth: CGFloat = 180
+    /// Enough height for the empty-hint + glass; SwiftUI then hugs the real
+    /// content. A 0-height window never gets a layout pass, so this is the
+    /// floor that breaks the hide-then-show deadlock.
+    private static let minimumDisplayableHeight: CGFloat = 48
+
+    /// A collapsed (0×N / N×0) frame is not a user-chosen position.
+    static func isDisplayable(_ frame: CGRect) -> Bool {
+        frame.width >= 1 && frame.height >= 1
+    }
+
+    /// Whether the panel is actually in front of the user — `isVisible` alone
+    /// is true for a 0-height window and for a window on another Space, both
+    /// of which would invert Show into Hide.
+    static func isShowingWhereTheUserIs(isVisible: Bool, isOnActiveSpace: Bool, frame: CGRect) -> Bool {
+        isVisible && isOnActiveSpace && isDisplayable(frame)
+    }
+
     /// The frame the overlay should occupy so it is fully visible on the
     /// screen the user is currently working on.
     ///
@@ -43,6 +63,16 @@ enum OverlayPlacement {
     ///     while working out where to land instead.
     /// - Returns: an integral frame fully contained in `active`.
     static func resolvedFrame(panel: CGRect, screens: [CGRect], active: CGRect) -> CGRect {
+        // A collapsed frame is NSHostingView hugging unmeasured SwiftUI
+        // content while the panel was orderOut'd. Inflate at the same origin
+        // before the rules below: `active.contains` is true for a degenerate
+        // on-screen rect, and ordering that front never recovers.
+        var panel = panel
+        if !isDisplayable(panel) {
+            panel.size.width = max(panel.width, minimumDisplayableWidth)
+            panel.size.height = max(panel.height, minimumDisplayableHeight)
+        }
+
         // Rule 1: never move a panel the user deliberately positioned on the
         // screen they're currently looking at. This is the overwhelmingly
         // common case (show/hide on the same display) and it must be a
