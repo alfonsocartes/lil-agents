@@ -13,8 +13,8 @@ final class FloatingPanel<Content: View>: NSPanel {
         )
 
         isFloatingPanel = true
-        level = .floating
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        level = .screenSaver
+        collectionBehavior = Self.overlayBehavior
         becomesKeyOnlyIfNeeded = true
         hidesOnDeactivate = false
         isMovableByWindowBackground = true
@@ -26,6 +26,11 @@ final class FloatingPanel<Content: View>: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
+        // Floor so NSHostingView can't hug a 0-height window after inflate:
+        // ContentSizedScrollView reports 0 until onGeometryChange commits,
+        // and sizingOptions includes .intrinsicContentSize. Empty hint is
+        // ~this tall; the session list grows above it.
+        minSize = NSSize(width: 180, height: 48)
         // We reuse this panel. The NSWindow default would let a close()
         // (Escape on a key panel, etc.) tear the window-server connection
         // while OverlayController still holds the object.
@@ -53,6 +58,20 @@ final class FloatingPanel<Content: View>: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
+    // `.floating` / `.statusBar` sit below full-screen content. `.screenSaver`
+    // plus `.canJoinAllApplications` (distinct collection-behavior group from
+    // `.fullScreenAuxiliary`) is what joins other apps' fullscreen Spaces.
+    // Do not combine `.canJoinAllSpaces` with `.moveToActiveSpace`.
+    // Computed: a stored `static let` isn't allowed on a generic type.
+    private static var overlayBehavior: NSWindow.CollectionBehavior {
+        [
+            .canJoinAllSpaces,
+            .canJoinAllApplications,
+            .fullScreenAuxiliary,
+            .stationary,
+        ]
+    }
+
     private func positionTopRight() {
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
@@ -69,14 +88,10 @@ final class FloatingPanel<Content: View>: NSPanel {
     /// Space membership can be silently dropped by the window server across
     /// full-screen transitions and display reconfiguration.
     func present() {
-        // Assigning the current collectionBehavior is a WindowServer no-op.
-        // Flip to a different value first so Space membership is re-evaluated
-        // (fullscreen / lock / Space change while hidden can otherwise order
-        // the panel front on a Space the user isn't on).
-        let joining: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        collectionBehavior = []
-        collectionBehavior = joining
-        level = .floating
+        // Don't assign `[]` first — that's Default and ejects the window from
+        // the current fullscreen Space.
+        level = .screenSaver
+        collectionBehavior = Self.overlayBehavior
 
         if let activeScreen = FloatingPanel.currentScreen() {
             let resolved = OverlayPlacement.resolvedFrame(
@@ -94,8 +109,8 @@ final class FloatingPanel<Content: View>: NSPanel {
         orderFrontRegardless()
 
         if !isOnActiveSpace {
-            collectionBehavior = []
-            collectionBehavior = joining
+            level = .screenSaver
+            collectionBehavior = Self.overlayBehavior
             orderFrontRegardless()
         }
     }

@@ -126,6 +126,19 @@ import Testing
         expectContained(result, in: screenA)
     }
 
+    /// NSHostingView resizes keeping the TOP-LEFT corner fixed (AppKit origin
+    /// is bottom-left). Inflating at the same origin would grow UPWARD from
+    /// the collapsed origin — the old top edge — and jump a user-placed
+    /// overlay ~48pt up. Drop the origin so maxY stays put.
+    @Test func zeroHeightPanelInflatesDownwardKeepingItsTopEdge() {
+        let panel = CGRect(x: 100, y: 100, width: 180, height: 0)
+        let result = OverlayPlacement.resolvedFrame(panel: panel, screens: [screenA], active: screenA)
+
+        #expect(result.height >= 48)
+        #expect(result.maxY == panel.maxY)
+        expectContained(result, in: screenA)
+    }
+
     /// Inflating height at the top edge would otherwise overflow `active`.
     /// The existing clamp must still pull the inflated rect fully on-screen.
     @Test func zeroHeightPanelAtTopEdgeIsClampedOnScreen() {
@@ -140,14 +153,14 @@ import Testing
         let panel = CGRect(x: 100, y: 100, width: 0, height: 40)
         let result = OverlayPlacement.resolvedFrame(panel: panel, screens: [screenA], active: screenA)
 
-        #expect(result.width >= 1)
+        #expect(result.width >= 180)
         expectContained(result, in: screenA)
     }
 }
 
-/// `isVisible` is true for a 0-height window and for a window on another
-/// Space — neither of those is "in front of the user", so toggle must not
-/// treat them as showing.
+/// `isVisible` is true for a 0-height window and for a panel on another
+/// Space, neither of which is "in front of the user", so toggle must not
+/// treat those as showing.
 @Suite struct OverlayVisibilityTests {
     private let realFrame = CGRect(x: 100, y: 100, width: 180, height: 120)
     private let collapsed = CGRect(x: 100, y: 100, width: 180, height: 0)
@@ -158,21 +171,21 @@ import Testing
         ))
     }
 
-    @Test func visibleOnActiveSpaceWithRealFrameIsShowing() {
+    @Test func visibleWithRealFrameIsShowing() {
         #expect(OverlayPlacement.isShowingWhereTheUserIs(
             isVisible: true, isOnActiveSpace: true, frame: realFrame
-        ))
-    }
-
-    @Test func visibleButOffSpaceIsNotShowing() {
-        #expect(!OverlayPlacement.isShowingWhereTheUserIs(
-            isVisible: true, isOnActiveSpace: false, frame: realFrame
         ))
     }
 
     @Test func visibleButZeroHeightIsNotShowing() {
         #expect(!OverlayPlacement.isShowingWhereTheUserIs(
             isVisible: true, isOnActiveSpace: true, frame: collapsed
+        ))
+    }
+
+    @Test func visibleButOffSpaceIsNotShowing() {
+        #expect(!OverlayPlacement.isShowingWhereTheUserIs(
+            isVisible: true, isOnActiveSpace: false, frame: realFrame
         ))
     }
 }

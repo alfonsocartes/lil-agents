@@ -43,9 +43,10 @@ enum OverlayPlacement {
         frame.width >= 1 && frame.height >= 1
     }
 
-    /// Whether the panel is actually in front of the user — `isVisible` alone
-    /// is true for a 0-height window and for a window on another Space, both
-    /// of which would invert Show into Hide.
+    /// Whether the panel is actually in front of the user. Off-space
+    /// (fullscreen vs desktop) must not count as showing, or the hotkey
+    /// hides a panel the user cannot see. `isVisible` is also true for a
+    /// 0-height window, which would invert Show into Hide.
     static func isShowingWhereTheUserIs(isVisible: Bool, isOnActiveSpace: Bool, frame: CGRect) -> Bool {
         isVisible && isOnActiveSpace && isDisplayable(frame)
     }
@@ -64,13 +65,21 @@ enum OverlayPlacement {
     /// - Returns: an integral frame fully contained in `active`.
     static func resolvedFrame(panel: CGRect, screens: [CGRect], active: CGRect) -> CGRect {
         // A collapsed frame is NSHostingView hugging unmeasured SwiftUI
-        // content while the panel was orderOut'd. Inflate at the same origin
-        // before the rules below: `active.contains` is true for a degenerate
-        // on-screen rect, and ordering that front never recovers.
+        // content while the panel was orderOut'd. Inflate before the rules
+        // below: `active.contains` is true for a degenerate on-screen rect,
+        // and ordering that front never recovers. Grow down (and right) so
+        // the top-left corner stays put — NSHostingView resizes the same
+        // way, AppKit origin being bottom-left.
         var panel = panel
         if !isDisplayable(panel) {
-            panel.size.width = max(panel.width, minimumDisplayableWidth)
-            panel.size.height = max(panel.height, minimumDisplayableHeight)
+            let newWidth = max(panel.width, minimumDisplayableWidth)
+            let newHeight = max(panel.height, minimumDisplayableHeight)
+            panel = CGRect(
+                x: panel.minX,
+                y: panel.minY - (newHeight - panel.height),
+                width: newWidth,
+                height: newHeight
+            )
         }
 
         // Rule 1: never move a panel the user deliberately positioned on the
