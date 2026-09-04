@@ -69,7 +69,7 @@ Click any session and it **jumps to the exact terminal pane that owns it** — a
 - **Notification Center alerts** — optionally get a banner (and sound) the instant a session goes **🔴 needs-approval** or **🟡 finished-its-turn**. Fires once per transition; tap the alert to jump straight to that pane. Fully configurable in **Settings** (which states, sound, on/off).
 - **Project-aware labels** — each session is labeled by its working-directory name, so you can tell your repos apart at a glance.
 - **Stay awake (lid closed)** — an optional toggle keeps your Mac awake with the lid shut, so long agent runs don't get suspended mid-task.
-- **Zero-config hook install** — one action wires the lifecycle hooks into the CLIs; config files are *merged, never clobbered* (Grok's hook file is fully owned), and install is idempotent and self-healing.
+- **Zero-config hook install** — install runs automatically on launch (idempotent; set `AGENTDECK_NO_INSTALL=1` to skip). Claude/Codex configs are merged in place; invalid JSON is left untouched, and the file is not rewritten if our entries are already correct. Grok's hook file is fully owned.
 - **Private by design** — everything is local. Events are sent over **loopback only** (`127.0.0.1:54173`), never your LAN, never the internet.
 - **Native & lightweight** — pure Swift 6, SwiftUI + AppKit, no Electron, no bundled runtime. Dock-less and unobtrusive (`LSUIElement`).
 
@@ -93,7 +93,9 @@ Claude Code / Codex CLI / Grok CLI
  (adds tty/PID/tool/event)        (loopback only)          🔴 🟡 🟢  +  jump-to-pane
 ```
 
-Existing hooks from other tools and plugins are preserved — the installer only ever adds or removes its own entries.
+Existing hooks from other tools and plugins are preserved — the installer only ever adds or removes its own entries. Invalid JSON is left untouched. If our entries are already correct, the file is not rewritten.
+
+Grok's `~/.grok/hooks/agentdeck.json` is fully owned. Grok also scans `~/.claude/settings.json` by default (`[compat.claude] hooks = true`). Users with Claude-only hooks should set `[compat.claude] hooks = false` in `~/.grok/config.toml`. Grok tracking does not need the Claude copy.
 
 ### Requirements
 
@@ -170,7 +172,7 @@ Forkers must set their own `DEVELOPMENT_TEAM` (currently `S74M2P6469` in `iOS/pr
 - **No product telemetry.** There is no analytics, no account, no cloud of ours.
 - **Usage is opt-in.** Session tracking never leaves the machine. On the Mac, **Settings → AI usage** reads that CLI's local sign-in and asks Anthropic, OpenAI, or xAI for your current usage. Off by default. On the iPhone, usage uses tokens from **Sign in** on the phone or from the Mac's iCloud Keychain share.
 - **Tokens stay in Keychain.** iCloud Keychain share is an explicit Mac toggle (**Settings → Send tokens to iPhone**), off by default.
-- **Non-destructive config edits.** Existing hooks are backed up and merged; uninstall removes only what `lil agents` added (`~/.grok/hooks/agentdeck.json` is deleted whole because that file is ours).
+- **Non-destructive config edits.** Claude/Codex configs are merged in place (invalid JSON is left untouched; already-correct entries are not rewritten). Uninstall removes only what `lil agents` added (`~/.grok/hooks/agentdeck.json` is deleted whole because that file is ours).
 
 ## Install & build
 
@@ -197,7 +199,7 @@ Run the test suite with:
 swift test
 ```
 
-On first launch, use the app's install action to wire up the CLI hooks, then start (or restart) a Claude Code, Codex, or Grok session — it should appear in the overlay immediately.
+On launch, hooks install automatically (idempotent; set `AGENTDECK_NO_INSTALL=1` to skip). Start (or restart) a Claude Code, Codex, or Grok session — it should appear in the overlay immediately.
 
 > **First-run permissions:** macOS will show a one-time **Automation** prompt so the app can control your terminal when you jump to a pane. Local source builds are ad-hoc code-signed (release downloads are Developer ID signed and notarized), which is enough for this grant to persist across launches.
 
