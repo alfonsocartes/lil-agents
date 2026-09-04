@@ -1017,4 +1017,29 @@ import Testing
             #expect(posted["tool_input"] == nil)
         }
     }
+
+    @Test func sessionTrackingApplyEnableInstallsHooks() throws {
+        try withTempHome { home in
+            try SessionTrackingHooks.apply(enabled: true)
+
+            #expect(claudeCommands(home, event: "SessionStart").contains { $0.contains(scriptPath) })
+            #expect(FileManager.default.fileExists(atPath: grokHooksURL(home).path))
+            #expect(FileManager.default.fileExists(
+                atPath: AgentDeck.supportDir.appendingPathComponent("forward-event.sh").path
+            ))
+        }
+    }
+
+    @Test func sessionTrackingApplyDisableUninstallsHooks() throws {
+        try withTempHome { home in
+            try SessionTrackingHooks.apply(enabled: true)
+            try SessionTrackingHooks.apply(enabled: false)
+
+            #expect(claudeCommands(home, event: "SessionStart").allSatisfy { !$0.contains(scriptPath) })
+            #expect(!FileManager.default.fileExists(atPath: grokHooksURL(home).path))
+            #expect(!FileManager.default.fileExists(
+                atPath: AgentDeck.supportDir.appendingPathComponent("forward-event.sh").path
+            ))
+        }
+    }
 }

@@ -62,7 +62,7 @@ final class Notifier: NSObject, SessionNotifying {
     /// as the request identifier so a newer notification for the same
     /// session/reason replaces any still-pending one rather than piling up.
     func notify(session: Session, reason: Reason) {
-        guard settings.notificationsEnabled else { return }
+        guard settings.sessionsEnabled, settings.notificationsEnabled else { return }
         switch reason {
         case .approval: guard settings.notifyOnApproval else { return }
         case .idle: guard settings.notifyOnIdle else { return }

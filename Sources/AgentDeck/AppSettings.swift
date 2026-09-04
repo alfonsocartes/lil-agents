@@ -19,6 +19,7 @@ final class AppSettings {
         static let codexUsageEnabled = "usage.codexEnabled"
         static let grokUsageEnabled = "usage.grokEnabled"
         static let shareTokensWithIPhone = "usage.shareTokensWithIPhone"
+        static let sessionsEnabled = "sessions.enabled"
         static let showBackgroundSessions = "sessions.showBackground"
     }
 
@@ -75,6 +76,22 @@ final class AppSettings {
     /// items. Nil in tests.
     var onShareTokensWithIPhoneChange: ((Bool) -> Void)?
 
+    /// Master switch for session tracking (hooks, overlay, listener, session
+    /// list). Default **true**: existing installs have no key, and turning
+    /// them off on upgrade would silently uninstall CLI hooks. Opt out from
+    /// Settings when you want usage-only.
+    var sessionsEnabled: Bool {
+        didSet {
+            defaults.set(sessionsEnabled, forKey: Keys.sessionsEnabled)
+            onSessionsEnabledChange?(sessionsEnabled)
+        }
+    }
+
+    /// Fired when `sessionsEnabled` flips so AppDelegate can install or
+    /// uninstall hooks and start or stop the session surfaces without a
+    /// relaunch. Wired in AppDelegate; nil in tests unless a test sets it.
+    var onSessionsEnabledChange: ((Bool) -> Void)?
+
     /// Show agents that have no terminal of their own — scripted or nested
     /// runs like `codex exec`, `claude -p`, grok headless, and CI. Default **false**: these
     /// have no pane to jump to and nobody waiting on them, and one agent
@@ -115,6 +132,7 @@ final class AppSettings {
         codexUsageEnabled = defaults.object(forKey: Keys.codexUsageEnabled) as? Bool ?? false
         grokUsageEnabled = defaults.object(forKey: Keys.grokUsageEnabled) as? Bool ?? false
         shareTokensWithIPhone = defaults.object(forKey: Keys.shareTokensWithIPhone) as? Bool ?? false
+        sessionsEnabled = defaults.object(forKey: Keys.sessionsEnabled) as? Bool ?? true
         showBackgroundSessions = defaults.object(forKey: Keys.showBackgroundSessions) as? Bool ?? false
     }
 }

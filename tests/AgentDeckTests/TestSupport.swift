@@ -176,6 +176,10 @@ final class InMemoryDefaults: UserDefaults {
         storage[defaultName] = value
     }
 
+    override func set(_ value: Bool, forKey defaultName: String) {
+        storage[defaultName] = value
+    }
+
     override func object(forKey defaultName: String) -> Any? {
         storage[defaultName]
     }

@@ -47,6 +47,16 @@ import Testing
         #expect(UsageMenuBarIcon.image(rows: [], darkAppearance: true) == nil)
     }
 
+    /// Usage-only mode (session tracking off) must not reserve attention
+    /// width — `labelImage(attention: nil)` matches the usage-block image.
+    @Test func labelImageWithoutAttentionMatchesUsageBlockWidth() {
+        let rows = [UsageMenuBarIcon.Row(symbolName: "sparkles", text: "62%", percent: 62, dimmed: false)]
+        let usageOnly = UsageMenuBarIcon.image(rows: rows, darkAppearance: true)
+        let composite = UsageMenuBarIcon.labelImage(attention: nil, rows: rows, darkAppearance: true)
+        #expect(usageOnly?.size.width == composite?.size.width)
+        #expect(usageOnly?.size.height == composite?.size.height)
+    }
+
     @Test func widthIsFixedRegardlessOfDigitCountAndAppearance() {
         let shortRow = [UsageMenuBarIcon.Row(symbolName: "sparkles", text: "7%", percent: 7, dimmed: false)]
         let longRow = [UsageMenuBarIcon.Row(symbolName: "sparkles", text: "100%", percent: 100, dimmed: false)]

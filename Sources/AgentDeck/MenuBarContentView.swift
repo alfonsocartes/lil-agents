@@ -24,6 +24,7 @@ struct MenuBarContentView: View {
     /// the header and the session list, and refreshed (throttled) whenever
     /// the dropdown appears.
     let usage: UsageStore
+    let settings: AppSettings
     @ObservedObject var updater: UpdaterController
 
     /// Flips activation policy so the `Settings` scene comes frontmost with a
@@ -60,23 +61,27 @@ struct MenuBarContentView: View {
             // three providers are disabled — see UsageMenuSection's doc comment.
             UsageMenuSection(usage: usage)
 
-            sessionsSection
+            if settings.sessionsEnabled {
+                sessionsSection
 
-            Divider()
-                .padding(.vertical, 4)
+                Divider()
+                    .padding(.vertical, 4)
+            }
 
             VStack(alignment: .leading, spacing: 2) {
                 // Title/icon reflect current overlay visibility. "⌥⌘J" is
                 // display TEXT ONLY — no real .keyboardShortcut: the global
                 // Carbon hotkey already toggles the overlay, and a functional
                 // key equivalent here would fire a SECOND toggle.
-                MenuRow(
-                    icon: overlay.isVisible ? "eye.slash" : "eye",
-                    title: overlay.isVisible ? "Hide overlay" : "Show overlay",
-                    trailing: "⌥⌘J"
-                ) {
-                    overlay.toggle()
-                    dismiss()
+                if settings.sessionsEnabled {
+                    MenuRow(
+                        icon: overlay.isVisible ? "eye.slash" : "eye",
+                        title: overlay.isVisible ? "Hide overlay" : "Show overlay",
+                        trailing: "⌥⌘J"
+                    ) {
+                        overlay.toggle()
+                        dismiss()
+                    }
                 }
 
                 // Real Toggle bound through the controller's own toggle() so the
@@ -133,14 +138,16 @@ struct MenuBarContentView: View {
                 .font(.headline)
                 .accessibilityAddTraits(.isHeader)
             Spacer()
-            Text("\(activeCount) active")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(.quaternary, in: Capsule())
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(activeCount) active session\(activeCount == 1 ? "" : "s")")
+            if settings.sessionsEnabled {
+                Text("\(activeCount) active")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(activeCount) active session\(activeCount == 1 ? "" : "s")")
+            }
         }
         .padding(.vertical, 4)
     }
@@ -185,9 +192,11 @@ struct MenuBarContentView: View {
 
 // MARK: - Status-item label
 
-/// The `MenuBarExtra` label. Observes the store, stay-awake controller, and
-/// usage store: the attention dot (unchanged) plus, when at least one usage
-/// provider is enabled, two stacked mini-rows of symbol + percent beside it.
+/// The `MenuBarExtra` label. Observes the store, stay-awake controller,
+/// usage store, and session-tracking flag: the attention dot plus, when at
+/// least one usage provider is enabled, two stacked mini-rows of symbol +
+/// percent beside it. When tracking is off the attention dot is omitted so
+/// usage-only mode is just the gauges (stay-awake still shows the bolt).
 ///
 /// The attention image renders via AttentionIcon with
 /// `.renderingMode(.original)` to keep its traffic-light tint (a template
@@ -206,13 +215,14 @@ struct StatusIconLabel: View {
     let store: SessionStore
     let awake: StayAwakeController
     let usage: UsageStore
+    let settings: AppSettings
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if !usageRows.isEmpty,
            let composite = UsageMenuBarIcon.labelImage(
-               attention: AttentionIcon.image(attention: store.attention, isAwake: awake.isAwake),
+               attention: sessionGlyph,
                rows: menuBarIconRows,
                darkAppearance: colorScheme == .dark
            ) {
@@ -221,6 +231,16 @@ struct StatusIconLabel: View {
         } else {
             attentionImage
         }
+    }
+
+    /// Traffic-light / stay-awake mark. Omitted when session tracking is off
+    /// (unless stay-awake is on) so usage-only mode is just the gauges.
+    private var sessionGlyph: NSImage? {
+        if settings.sessionsEnabled {
+            return AttentionIcon.image(attention: store.attention, isAwake: awake.isAwake)
+        }
+        guard awake.isAwake else { return nil }
+        return AttentionIcon.image(attention: .none, isAwake: true)
     }
 
     /// Usage disabled (or composite construction failed): today's exact
@@ -416,6 +436,7 @@ private func previewMenu(sessions: [Session], awake: Bool) -> some View {
         awake: stayAwake,
         overlay: overlay,
         usage: usage,
+        settings: AppSettings(),
         updater: updater,
         activationPolicy: ActivationPolicyController()
     )

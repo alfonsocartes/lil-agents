@@ -35,10 +35,13 @@ final class EventListener: Sendable {
     private let lifecycle: SessionLifecycleCoordinator
     private let processResolver: any ProcessIdentityResolving
     private let token: String
-    /// Retains the live NWListener for the app's lifetime; written once in
-    /// `start()`. Mutex-wrapped purely so the retention slot is concurrency-
-    /// safe — nothing reads it back.
+    /// Retains the live NWListener while tracking is on. Mutex-wrapped so
+    /// start/stop from the main actor and the listener queue stay concurrency-
+    /// safe. `nil` means stopped.
     private let listener = Mutex<NWListener?>(nil)
+    /// Bumped by every `start()`/`stop()` so in-flight bind retries from a
+    /// previous generation cannot resurrect a listener after disable.
+    private let bindGeneration = Mutex(UInt64(0))
     private let queue = DispatchQueue(label: "agentdeck.listener")
     /// In-flight connection count. Only ever touched from handlers running on
     /// the serial `queue`, but kept in a Mutex so the invariant is enforced by
@@ -55,31 +58,105 @@ final class EventListener: Sendable {
         self.token = token
     }
 
+    /// True while a listener is retained. Tests use this instead of racing
+    /// a TCP connect; production only cares that start/stop flip it.
+    var isRunning: Bool {
+        listener.withLock { $0 != nil }
+    }
+
     func start() {
+        let alreadyRunning = listener.withLock { $0 != nil }
+        guard !alreadyRunning else { return }
+        let generation = bindGeneration.withLock { value -> UInt64 in
+            value += 1
+            return value
+        }
+        queue.async { [weak self] in
+            self?.bind(generation: generation, attempt: 0)
+        }
+    }
+
+    /// Unbinds port 54173. No-op if already stopped. Invalidates in-flight
+    /// bind retries so a disable cannot lose a race to a delayed `start()`.
+    func stop() {
+        bindGeneration.withLock { $0 += 1 }
+        let existing = listener.withLock { slot -> NWListener? in
+            let current = slot
+            slot = nil
+            return current
+        }
+        guard let existing else { return }
+        existing.cancel()
+        NSLog("AgentDeck listener stopped")
+    }
+
+    private func bind(generation: UInt64, attempt: Int) {
+        guard bindGeneration.withLock({ $0 == generation }) else { return }
+        guard listener.withLock({ $0 == nil }) else { return }
         do {
             let params = NWParameters.tcp
+            params.allowLocalEndpointReuse = true
             params.requiredLocalEndpoint = NWEndpoint.hostPort(
                 host: "127.0.0.1",
                 port: NWEndpoint.Port(rawValue: AgentDeck.port)!
             )
-            let listener = try NWListener(using: params)
-            listener.newConnectionHandler = { [weak self] conn in
+            let newListener = try NWListener(using: params)
+            newListener.newConnectionHandler = { [weak self] conn in
                 self?.handle(conn)
             }
-            listener.stateUpdateHandler = { state in
-                if case .failed(let err) = state {
+            newListener.stateUpdateHandler = { [weak self] state in
+                guard let self else { return }
+                switch state {
+                case .ready:
+                    NSLog("AgentDeck listening on 127.0.0.1:\(AgentDeck.port)")
+                case .failed(let err):
                     // Bind failure (most commonly EADDRINUSE) used to be logged
                     // and silently swallowed, leaving the forwarder posting hook
                     // events — now including the bearer token — at whatever else
                     // is squatting on the port. Make this loud instead.
                     NSLog("AgentDeck: ⚠️ FAILED to bind 127.0.0.1:\(AgentDeck.port) — \(err). Another process may already be bound to this port and intercepting hook events; AgentDeck will not receive session updates until this is resolved.")
+                    self.drop(newListener)
+                    newListener.cancel()
+                    self.scheduleRetry(generation: generation, attempt: attempt + 1)
+                default:
+                    break
                 }
             }
-            listener.start(queue: queue)
-            self.listener.withLock { $0 = listener }
-            NSLog("AgentDeck listening on 127.0.0.1:\(AgentDeck.port)")
+            // Publish the listener before start() so a re-entrant `.failed`
+            // can drop this object instead of leaving a dead one in the slot
+            // after we return. Re-check generation under the slot lock so
+            // stop() that already bumped the generation cannot lose the race.
+            let keep = bindGeneration.withLock { current -> Bool in
+                guard current == generation else { return false }
+                listener.withLock { $0 = newListener }
+                return true
+            }
+            if !keep {
+                newListener.cancel()
+                return
+            }
+            newListener.start(queue: queue)
+            if bindGeneration.withLock({ $0 != generation }) {
+                drop(newListener)
+                newListener.cancel()
+            }
         } catch {
             NSLog("AgentDeck could not start listener: \(error)")
+            scheduleRetry(generation: generation, attempt: attempt + 1)
+        }
+    }
+
+    private func drop(_ candidate: NWListener) {
+        listener.withLock { slot in
+            if slot === candidate { slot = nil }
+        }
+    }
+
+    private func scheduleRetry(generation: UInt64, attempt: Int) {
+        guard attempt < 8 else { return }
+        guard bindGeneration.withLock({ $0 == generation }) else { return }
+        queue.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.bind(generation: generation, attempt: attempt)
         }
     }
 
@@ -208,7 +285,10 @@ final class EventListener: Sendable {
         let processLookup = event.agent_pid.flatMap { pid in
             pid > 1 ? processResolver.identity(for: pid) : nil
         }
+        let generation = bindGeneration.withLock { $0 }
+        guard isRunning else { return }
         Task { @MainActor in
+            guard self.bindGeneration.withLock({ $0 == generation }), self.isRunning else { return }
             self.lifecycle.receive(event, processLookup: processLookup)
         }
     }

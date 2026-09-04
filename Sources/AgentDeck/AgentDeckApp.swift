@@ -22,6 +22,7 @@ struct AgentDeckApp: App {
                 awake: appDelegate.services.awake,
                 overlay: appDelegate.services.overlay,
                 usage: appDelegate.services.usage,
+                settings: appDelegate.services.settings,
                 updater: appDelegate.services.updater,
                 activationPolicy: appDelegate.services.activationPolicy
             )
@@ -29,7 +30,8 @@ struct AgentDeckApp: App {
             StatusIconLabel(
                 store: appDelegate.services.store,
                 awake: appDelegate.services.awake,
-                usage: appDelegate.services.usage
+                usage: appDelegate.services.usage,
+                settings: appDelegate.services.settings
             )
         }
         .menuBarExtraStyle(.window)
