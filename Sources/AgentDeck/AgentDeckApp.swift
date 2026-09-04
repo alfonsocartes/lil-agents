@@ -22,6 +22,7 @@ struct AgentDeckApp: App {
                 awake: appDelegate.services.awake,
                 overlay: appDelegate.services.overlay,
                 usage: appDelegate.services.usage,
+                settings: appDelegate.services.settings,
                 updater: appDelegate.services.updater,
                 activationPolicy: appDelegate.services.activationPolicy
             )

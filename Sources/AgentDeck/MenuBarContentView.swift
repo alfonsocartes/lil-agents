@@ -24,6 +24,7 @@ struct MenuBarContentView: View {
     /// the header and the session list, and refreshed (throttled) whenever
     /// the dropdown appears.
     let usage: UsageStore
+    let settings: AppSettings
     @ObservedObject var updater: UpdaterController
 
     /// Flips activation policy so the `Settings` scene comes frontmost with a
@@ -60,23 +61,27 @@ struct MenuBarContentView: View {
             // three providers are disabled — see UsageMenuSection's doc comment.
             UsageMenuSection(usage: usage)
 
-            sessionsSection
+            if settings.sessionsEnabled {
+                sessionsSection
 
-            Divider()
-                .padding(.vertical, 4)
+                Divider()
+                    .padding(.vertical, 4)
+            }
 
             VStack(alignment: .leading, spacing: 2) {
                 // Title/icon reflect current overlay visibility. "⌥⌘J" is
                 // display TEXT ONLY — no real .keyboardShortcut: the global
                 // Carbon hotkey already toggles the overlay, and a functional
                 // key equivalent here would fire a SECOND toggle.
-                MenuRow(
-                    icon: overlay.isVisible ? "eye.slash" : "eye",
-                    title: overlay.isVisible ? "Hide overlay" : "Show overlay",
-                    trailing: "⌥⌘J"
-                ) {
-                    overlay.toggle()
-                    dismiss()
+                if settings.sessionsEnabled {
+                    MenuRow(
+                        icon: overlay.isVisible ? "eye.slash" : "eye",
+                        title: overlay.isVisible ? "Hide overlay" : "Show overlay",
+                        trailing: "⌥⌘J"
+                    ) {
+                        overlay.toggle()
+                        dismiss()
+                    }
                 }
 
                 // Real Toggle bound through the controller's own toggle() so the
@@ -133,14 +138,16 @@ struct MenuBarContentView: View {
                 .font(.headline)
                 .accessibilityAddTraits(.isHeader)
             Spacer()
-            Text("\(activeCount) active")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(.quaternary, in: Capsule())
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(activeCount) active session\(activeCount == 1 ? "" : "s")")
+            if settings.sessionsEnabled {
+                Text("\(activeCount) active")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(activeCount) active session\(activeCount == 1 ? "" : "s")")
+            }
         }
         .padding(.vertical, 4)
     }
@@ -416,6 +423,7 @@ private func previewMenu(sessions: [Session], awake: Bool) -> some View {
         awake: stayAwake,
         overlay: overlay,
         usage: usage,
+        settings: AppSettings(),
         updater: updater,
         activationPolicy: ActivationPolicyController()
     )

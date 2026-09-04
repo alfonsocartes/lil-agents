@@ -449,6 +449,32 @@ import Testing
         #expect(system.lifecycle.trackedLifecycleCount == 1)
     }
 
+    @Test func dropAllSessionsEndsForegroundAndBackgroundLifecycles() {
+        let system = makeSystem()
+        system.lifecycle.showsBackgroundSessions = { true }
+        let process = processIdentity(pid: 301)
+
+        system.lifecycle.receive(
+            makeEvent(
+                "SessionStart", id: "fg", tool: "claude", tty: "ttys070",
+                agentPID: process.pid
+            ),
+            processLookup: .running(process)
+        )
+        system.lifecycle.receive(
+            makeEvent("SessionStart", id: "bg", tool: "codex", headless: true),
+            processLookup: nil
+        )
+        #expect(Set(system.store.sessions.map(\.id)) == ["fg", "bg"])
+        #expect(system.lifecycle.trackedLifecycleCount == 2)
+
+        system.lifecycle.dropAllSessions()
+
+        #expect(system.store.sessions.isEmpty)
+        #expect(system.lifecycle.trackedLifecycleCount == 0)
+        #expect(system.observer.cancelCount[process] == 1)
+    }
+
     @Test func interactiveRunsAreStillTrackedWhenHeadlessIsAbsentOrFalse() {
         let system = makeSystem()
 

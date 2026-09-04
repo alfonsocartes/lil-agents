@@ -124,6 +124,8 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .disabled(!settings.sessionsEnabled)
+        .foregroundStyle(settings.sessionsEnabled ? .primary : .secondary)
     }
 
     /// Off by default: an agent with no terminal of its own is usually a
@@ -135,12 +137,24 @@ struct SettingsView: View {
             Text("Sessions")
                 .font(.headline)
 
-            Toggle("Show background agents", isOn: $settings.showBackgroundSessions)
+            Toggle("Track sessions", isOn: $settings.sessionsEnabled)
 
-            Text("Agents with no terminal of their own — scripted runs like `codex exec`, `claude -p`, and grok headless, CI jobs, and editor-hosted sessions. They're hidden by default because there's no pane to jump to, and one agent spawning others can bury the sessions you're actually watching.")
+            Text("Wires lifecycle hooks into Claude Code, Codex CLI, and Grok CLI. Off removes those hooks. The overlay and session list only exist while this is on.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Show background agents", isOn: $settings.showBackgroundSessions)
+
+                Text("Agents with no terminal of their own — scripted runs like `codex exec`, `claude -p`, and grok headless, CI jobs, and editor-hosted sessions. They're hidden by default because there's no pane to jump to, and one agent spawning others can bury the sessions you're actually watching.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.leading, 18)
+            .disabled(!settings.sessionsEnabled)
+            .foregroundStyle(settings.sessionsEnabled ? .primary : .secondary)
         }
     }
 

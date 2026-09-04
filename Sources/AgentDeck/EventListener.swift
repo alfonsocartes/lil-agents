@@ -35,9 +35,9 @@ final class EventListener: Sendable {
     private let lifecycle: SessionLifecycleCoordinator
     private let processResolver: any ProcessIdentityResolving
     private let token: String
-    /// Retains the live NWListener for the app's lifetime; written once in
-    /// `start()`. Mutex-wrapped purely so the retention slot is concurrency-
-    /// safe — nothing reads it back.
+    /// Retains the live NWListener while tracking is on. Mutex-wrapped so
+    /// start/stop from the main actor and the listener queue stay concurrency-
+    /// safe. `nil` means stopped.
     private let listener = Mutex<NWListener?>(nil)
     private let queue = DispatchQueue(label: "agentdeck.listener")
     /// In-flight connection count. Only ever touched from handlers running on
@@ -55,7 +55,15 @@ final class EventListener: Sendable {
         self.token = token
     }
 
+    /// True while a listener is retained. Tests use this instead of racing
+    /// a TCP connect; production only cares that start/stop flip it.
+    var isRunning: Bool {
+        listener.withLock { $0 != nil }
+    }
+
     func start() {
+        let alreadyRunning = listener.withLock { $0 != nil }
+        guard !alreadyRunning else { return }
         do {
             let params = NWParameters.tcp
             params.requiredLocalEndpoint = NWEndpoint.hostPort(
@@ -81,6 +89,20 @@ final class EventListener: Sendable {
         } catch {
             NSLog("AgentDeck could not start listener: \(error)")
         }
+    }
+
+    /// Unbinds port 54173. No-op if already stopped. After this returns the
+    /// retention slot is nil, so a later `start()` may bind again — the OS
+    /// may still take a moment to release the port.
+    func stop() {
+        let existing = listener.withLock { slot -> NWListener? in
+            let current = slot
+            slot = nil
+            return current
+        }
+        guard let existing else { return }
+        existing.cancel()
+        NSLog("AgentDeck listener stopped")
     }
 
     private func handle(_ conn: NWConnection) {

@@ -14,6 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var listener: EventListener?
     private var lifecycle: SessionLifecycleCoordinator?
     private var notifier: Notifier?
+    /// Serializes hook install/uninstall across rapid Settings toggles.
+    /// Cancelled before a newer apply starts; `SessionTrackingHooks.apply`
+    /// still takes a lock so an already-running mutation finishes first.
+    private var hookMutationTask: Task<Void, Never>?
 
     func applicationDidBecomeActive(_ notification: Notification) {
         if services.settings.shareTokensWithIPhone {
@@ -74,36 +78,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lifecycle?.dropBackgroundSessions()
         }
 
-        // Start the event listener.
+        // Construct the listener but do not start it yet — start/stop follows
+        // `sessionsEnabled` through `applySessionTracking`.
         let listener = EventListener(
             lifecycle: lifecycle,
             processResolver: processResolver,
             token: token
         )
-        listener.start()
         self.listener = listener
 
         // Reflect current sleep state.
         services.awake.refresh()
-
-        // Install/refresh CLI hooks every launch. install() is idempotent and
-        // self-healing (upsertGroups repairs any stale/broken prior entries), so
-        // running it unconditionally keeps config correct across app updates.
-        // Set AGENTDECK_NO_INSTALL=1 to skip touching ~/.claude, ~/.codex, and
-        // ~/.grok (used for smoke-testing the listener/UI without altering real config).
-        if ProcessInfo.processInfo.environment["AGENTDECK_NO_INSTALL"] == nil {
-            // Off the main thread — install() does file reads, JSON parsing and
-            // atomic writes we don't want blocking launch.
-            Task.detached(priority: .utility) {
-                do { try HookInstaller.install(port: AgentDeck.port) }
-                catch { NSLog("AgentDeck hook install failed: \(error)") }
-            }
-        }
-
-        // Show the floating overlay (pure session list). Hide/show is driven by
-        // the global hotkey and the menu bar; the overlay itself has no chrome.
-        // OverlayController builds the panel lazily, here on first show.
-        services.overlay.show()
 
         // The menu bar presence is the SwiftUI `MenuBarExtra` scene in
         // `AgentDeckApp` (status icon + session dropdown); the legacy
@@ -111,21 +96,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the SwiftUI `Settings` scene, opened via the `openSettings` action
         // with `services.activationPolicy` handling frontmost-ness.
 
-        // Ask for notification permission once at launch. NSLog reports the
-        // outcome; harmless to call on every launch — the system only
-        // actually prompts the user the first time.
-        notifier.requestAuthorization()
-
-        // Global toggle hotkey: ⌥⌘J (Option-Command-J). Deliberately avoids the
-        // ⌃⌥⌘ "hyper" combos that Vivid claims, and J is rarely bound in iTerm2.
-        // Carbon hotkeys need no Accessibility permission and fire from any app.
-        let registered = hotKeys.register(
-            keyCode: UInt32(kVK_ANSI_J),
-            modifiers: UInt32(optionKey | cmdKey)
-        ) { [weak self] in
-            self?.services.overlay.toggle()
+        settings.onSessionsEnabledChange = { [weak self] enabled in
+            self?.applySessionTracking(enabled: enabled)
         }
-        NSLog("AgentDeck hotkey ⌥⌘J registered: \(registered)")
+        applySessionTracking(enabled: settings.sessionsEnabled)
 
         // Offer to enable launch-at-login last, once hotkey registration and
         // the notification-permission request above have already run.
@@ -137,6 +111,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // hook-install block above) for the same reason: a modal alert would
         // hang a headless/scripted run waiting on user input.
         promptForLoginItemIfNeeded()
+    }
+
+    /// Launch and the Settings toggle share this path. Enable installs hooks
+    /// (skip-if-correct) and starts the session surfaces. Disable uninstalls
+    /// hooks only and tears those surfaces down. Failures log; the switch
+    /// stays as the user's intent.
+    private func applySessionTracking(enabled: Bool) {
+        if enabled {
+            listener?.start()
+            registerOverlayHotkey()
+            services.overlay.show()
+            notifier?.requestAuthorization()
+        } else {
+            listener?.stop()
+            hotKeys.unregister()
+            services.overlay.hide()
+            lifecycle?.dropAllSessions()
+        }
+
+        hookMutationTask?.cancel()
+        hookMutationTask = Task.detached(priority: .utility) {
+            guard !Task.isCancelled else { return }
+            do {
+                try SessionTrackingHooks.apply(enabled: enabled)
+            } catch {
+                let action = enabled ? "install" : "uninstall"
+                NSLog("AgentDeck hook \(action) failed: \(error)")
+            }
+        }
+    }
+
+    /// Global toggle hotkey: ⌥⌘J (Option-Command-J). Deliberately avoids the
+    /// ⌃⌥⌘ "hyper" combos that Vivid claims, and J is rarely bound in iTerm2.
+    /// Carbon hotkeys need no Accessibility permission and fire from any app.
+    private func registerOverlayHotkey() {
+        let registered = hotKeys.register(
+            keyCode: UInt32(kVK_ANSI_J),
+            modifiers: UInt32(optionKey | cmdKey)
+        ) { [weak self] in
+            self?.services.overlay.toggle()
+        }
+        NSLog("AgentDeck hotkey ⌥⌘J registered: \(registered)")
     }
 
     /// Shows the one-shot "start at login?" alert at most once, ever, if
