@@ -53,7 +53,7 @@ Launch and the Settings toggle share one apply function in `AppDelegate`. Wire `
 
 ### On (`sessionsEnabled == true`)
 
-- `HookInstaller.install(port:)` on a detached utility task (idempotent, current launch path).
+- `HookInstaller.install(port:)` on a detached utility task. Same call as today's launch path. After [#5](https://github.com/alfonsocartes/lil-agents/pull/5) this is skip-if-correct for Claude/Codex (no rewrite when our entries already match) and leaves invalid JSON untouched. Do not reintroduce per-launch rewrites.
 - `EventListener.start()` (no-op if already running).
 - Register ⌥⌘J.
 - `overlay.show()`.
@@ -80,6 +80,8 @@ Rapid on/off: keep one hook-mutation `Task`. Cancel it before starting the next 
 ### Failures
 
 Install or uninstall errors: `NSLog`, keep the toggle as the user’s intent. Do not revert `sessionsEnabled`. Same as today’s launch-install failure.
+
+`install()` already continues other CLIs if one config is unreadable, then throws the first error. `uninstall()` already no-ops a Claude/Codex file it cannot parse. Do not change that.
 
 ## Event listener
 
@@ -111,20 +113,19 @@ Use `InMemoryDefaults` for settings tests (existing `TestSupport` pattern).
 - Writing it persists and fires `onSessionsEnabledChange`.
 - `EventListener.stop()` on an unstarted listener is a no-op. start → stop → start binds again. Suite `.serialized` so it cannot collide with a live app on 54173; skip the bind-again assertion if the production port is already taken.
 - `SessionLifecycleCoordinator.dropAllSessions()` ends every lifecycle, including non-background ones.
-- Existing `HookInstaller` install/uninstall tests stay as-is.
+- Existing `HookInstaller` install/uninstall tests stay as-is, including the skip-if-correct and unreadable-JSON cases from #5.
 
 `AppDelegate` launch/toggle wiring stays untested, same as today.
 
 ## Docs
 
-README:
+README (after #5 it already says install runs automatically on launch and is skip-if-correct):
 
 - Sessions are on by default and can be turned off in Settings.
 - Enable installs hooks; disable uninstalls them.
 - Overlay exists only while sessions are on.
 - Usage is unchanged (opt-in, menu bar + overlay header while sessions are on; menu bar only while off).
-- Remove or rewrite “zero-config hook install” so it does not imply hooks are always present.
-- Fix the stale “use the app's install action” line (install is automatic when tracking is on).
+- Qualify “hooks install automatically on launch” and “zero-config hook install”: that is only while **Track sessions** is on. Off removes the hooks.
 
 ## Files
 
