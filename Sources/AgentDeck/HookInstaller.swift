@@ -13,13 +13,17 @@ import Synchronization
 /// local listener (`127.0.0.1:<port>/event`) matching the `HookEvent` wire
 /// contract in Model.swift.
 ///
-/// Claude and Codex config files are always merged (never clobbered): existing
-/// hook entries from other tools/plugins are preserved, and our own entries
-/// are only added once (matched by exact command string), making install
-/// idempotent. Grok's `~/.grok/hooks/agentdeck.json` is fully owned and
-/// overwritten each launch.
+/// Claude and Codex configs are merged in place. Invalid JSON is left
+/// untouched (`Error.unreadableConfig`). If our entries are already correct
+/// (quoted command + timeout 10), the file is not rewritten. Unknown
+/// per-event shapes are skipped rather than replaced. Grok's
+/// `~/.grok/hooks/agentdeck.json` is fully owned and overwritten each launch.
 enum HookInstaller {
     struct Status { var claude: Bool; var codex: Bool; var grok: Bool }
+
+    enum Error: Swift.Error, Equatable {
+        case unreadableConfig(URL)
+    }
 
     // MARK: - Paths
 
@@ -89,10 +93,6 @@ enum HookInstaller {
 
     private static var claudeSettingsURL: URL {
         homeDirectory.appendingPathComponent(".claude/settings.json")
-    }
-
-    private static var claudeBackupURL: URL {
-        homeDirectory.appendingPathComponent(".claude/settings.json.agentdeck.bak")
     }
 
     private static var codexHooksURL: URL {
@@ -185,9 +185,16 @@ enum HookInstaller {
         try FileManager.default.createDirectory(at: AgentDeck.supportDir, withIntermediateDirectories: true)
         try writeForwarderScript(port: port)
         try writeMergerScript()
-        try installClaudeHooks()
-        try installCodexHooks()
-        try installGrokHooks()
+        // Each CLI is independent: a corrupt Claude settings.json must not
+        // skip Codex/Grok (and the reverse).
+        var firstError: Swift.Error?
+        for step in [installClaudeHooks, installCodexHooks, installGrokHooks] {
+            do { try step() }
+            catch {
+                if firstError == nil { firstError = error }
+            }
+        }
+        if let firstError { throw firstError }
     }
 
     // MARK: - uninstall()
@@ -495,10 +502,12 @@ enum HookInstaller {
           #     first POST; this is a same-host, low-severity residual — see
           #     the bind-failure log in EventListener.swift for the detection
           #     side of this mitigation.)
-          curl -fsS -m 2 -X POST \\
+          # Body on stdin (`--data-binary @-`), not `-d`, so a large JSON
+          # payload cannot blow ARG_MAX or leak onto the process list.
+          printf '%s' "$json" | curl -fsS -m 2 -X POST \\
             -H 'Content-Type: application/json' \\
             -H "X-AgentDeck-Token: $token" \\
-            -d "$json" \\
+            --data-binary @- \\
             "http://127.0.0.1:$PORT/event" >/dev/null 2>&1 || exit 0
         fi
 
@@ -579,6 +588,17 @@ enum HookInstaller {
             if os.environ.get("AGENTDECK_HEADLESS", ""):
                 data["headless"] = True
 
+            # HookEvent only decodes these keys. Drop everything else
+            # (tool_input, prompt, camelCase leftovers, ...) so a large hook
+            # payload cannot blow the listener's 64KB cap.
+            keep = {
+                "tool", "event", "session_id", "cwd", "tty",
+                "notification_type", "reason", "agent_pid", "headless",
+                "terminal", "wezterm_pane", "wezterm_socket", "wezterm_exe",
+                "tmux_pane", "tmux_socket", "tmux_host", "host_tty",
+            }
+            data = {k: v for k, v in data.items() if k in keep}
+
             print(json.dumps(data))
 
 
@@ -594,20 +614,19 @@ enum HookInstaller {
     private static func installClaudeHooks() throws {
         let fm = FileManager.default
         var root: [String: Any] = [:]
-        if let data = try? Data(contentsOf: claudeSettingsURL) {
-            // Back up the ORIGINAL settings exactly once. install() runs on every
-            // launch, so overwriting an existing backup would clobber the pristine
-            // pre-AgentDeck copy with an already-hook-modified one.
-            if !fm.fileExists(atPath: claudeBackupURL.path) {
-                try? data.write(to: claudeBackupURL)
-            }
-            if let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                root = parsed
-            }
+        if let existing = try readJSONObject(at: claudeSettingsURL) {
+            root = existing
         }
 
+        if root["hooks"] != nil && root["hooks"] as? [String: Any] == nil {
+            throw Error.unreadableConfig(claudeSettingsURL)
+        }
         var hooks = root["hooks"] as? [String: Any] ?? [:]
+        if hasCorrectAgentDeckEntries(hooks, events: claudeEvents, tool: "claude", matcher: "") {
+            return
+        }
         for event in claudeEvents {
+            if hooks[event] != nil && hooks[event] as? [[String: Any]] == nil { continue }
             hooks[event] = upsertGroups(hooks[event], command: command(for: "claude", event: event))
         }
         root["hooks"] = hooks
@@ -635,14 +654,21 @@ enum HookInstaller {
     private static func installCodexHooks() throws {
         let fm = FileManager.default
         var root: [String: Any] = [:]
-        if let data = try? Data(contentsOf: codexHooksURL),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            root = parsed
+        if let existing = try readJSONObject(at: codexHooksURL) {
+            root = existing
         }
 
+        if root["hooks"] != nil && root["hooks"] as? [String: Any] == nil {
+            throw Error.unreadableConfig(codexHooksURL)
+        }
         var hooks = root["hooks"] as? [String: Any] ?? [:]
+        if hasCorrectAgentDeckEntries(hooks, events: codexEvents, tool: "codex", matcher: ".*") {
+            return
+        }
         for event in codexEvents {
-            hooks[event] = upsertGroups(hooks[event], command: command(for: "codex", event: event), matcher: ".*")
+            if hooks[event] != nil && hooks[event] as? [[String: Any]] == nil { continue }
+            hooks[event] = upsertGroups(
+                hooks[event], command: command(for: "codex", event: event), matcher: ".*")
         }
         root["hooks"] = hooks
         if root["description"] == nil {
@@ -730,8 +756,59 @@ enum HookInstaller {
             g["hooks"] = entries
             return g
         }
-        groups.append(["matcher": matcher, "hooks": [["type": "command", "command": command]]])
+        groups.append(["matcher": matcher, "hooks": [["type": "command", "command": command, "timeout": 10]]])
         return groups
+    }
+
+    /// Missing file → nil (caller creates). Existing file that is not a JSON
+    /// object → throw, and the caller must not write.
+    private static func readJSONObject(at url: URL) throws -> [String: Any]? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw Error.unreadableConfig(url)
+        }
+        guard let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw Error.unreadableConfig(url)
+        }
+        return parsed
+    }
+
+    /// True when every `events` key already has exactly one AgentDeck command
+    /// matching the desired quoted form, timeout 10, and matcher. Unknown
+    /// shapes and stale/duplicate/wrong-matcher forwarder entries force a rewrite.
+    private static func hasCorrectAgentDeckEntries(
+        _ hooks: [String: Any],
+        events: [String],
+        tool: String,
+        matcher: String
+    ) -> Bool {
+        let scriptPath = forwarderScriptURL.path
+        for event in events {
+            // Missing key → we still need to add our entry. Unknown shape →
+            // install will leave it alone, so it must not poison skip-write.
+            if hooks[event] == nil { return false }
+            guard let groups = hooks[event] as? [[String: Any]] else { continue }
+            let desired = command(for: tool, event: event)
+            var ours: [[String: Any]] = []
+            var matchers: [String] = []
+            for group in groups {
+                let entries = (group["hooks"] as? [[String: Any]] ?? []).filter {
+                    ($0["command"] as? String)?.contains(scriptPath) == true
+                }
+                if entries.isEmpty { continue }
+                ours.append(contentsOf: entries)
+                matchers.append(group["matcher"] as? String ?? "")
+            }
+            guard ours.count == 1,
+                  matchers == [matcher],
+                  ours[0]["command"] as? String == desired,
+                  ours[0]["timeout"] as? Int == 10
+            else { return false }
+        }
+        return true
     }
 
     /// Returns `hooks` with every entry referencing our forwarder script

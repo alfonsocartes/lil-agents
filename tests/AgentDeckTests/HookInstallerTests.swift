@@ -25,6 +25,79 @@ import Testing
         try! data.write(to: url)
     }
 
+    private func codexHooksURL(_ home: URL) -> URL {
+        home.appendingPathComponent(".codex/hooks.json")
+    }
+
+    private func seedCodex(_ home: URL, _ root: [String: Any]) {
+        let url = codexHooksURL(home)
+        try! FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try! JSONSerialization.data(withJSONObject: root)
+        try! data.write(to: url)
+    }
+
+    private func agentDeckEntry(tool: String, event: String, timeout: Int? = 10) -> [String: Any] {
+        var entry: [String: Any] = [
+            "type": "command",
+            "command": "'\(scriptPath)' \(tool) \(event)",
+        ]
+        if let timeout { entry["timeout"] = timeout }
+        return entry
+    }
+
+    private func agentDeckGroup(tool: String, event: String, matcher: String, timeout: Int? = 10) -> [String: Any] {
+        ["matcher": matcher, "hooks": [agentDeckEntry(tool: tool, event: event, timeout: timeout)]]
+    }
+
+    /// Seeds every Claude event with the quoted AgentDeck command (and timeout
+    /// unless `timeout` is nil). Optional extra PreToolUse group is prepended.
+    private func seedCorrectClaude(
+        _ home: URL,
+        timeout: Int? = 10,
+        extraPreToolUse: [String: Any]? = nil
+    ) {
+        let events = [
+            "SessionStart", "UserPromptSubmit", "PreToolUse", "Notification",
+            "Stop", "SubagentStop", "SessionEnd",
+        ]
+        var hooks: [String: Any] = [:]
+        for event in events {
+            var groups: [[String: Any]] = [
+                agentDeckGroup(tool: "claude", event: event, matcher: "", timeout: timeout)
+            ]
+            if event == "PreToolUse", let extraPreToolUse {
+                groups.insert(extraPreToolUse, at: 0)
+            }
+            hooks[event] = groups
+        }
+        seedClaude(home, ["hooks": hooks])
+    }
+
+    /// Seeds every Codex event with the quoted AgentDeck command (matcher `.*`).
+    private func seedCorrectCodex(
+        _ home: URL,
+        timeout: Int? = 10,
+        matcher: String = ".*",
+        extraPreToolUse: [String: Any]? = nil
+    ) {
+        let events = [
+            "SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "Stop",
+            "SessionEnd",
+        ]
+        var hooks: [String: Any] = [:]
+        for event in events {
+            var groups: [[String: Any]] = [
+                agentDeckGroup(tool: "codex", event: event, matcher: matcher, timeout: timeout)
+            ]
+            if event == "PreToolUse", let extraPreToolUse {
+                groups.insert(extraPreToolUse, at: 0)
+            }
+            hooks[event] = groups
+        }
+        seedCodex(home, ["hooks": hooks])
+    }
+
     /// Every command string wired for `event` in the temp home's settings.json.
     private func claudeCommands(_ home: URL, event: String) -> [String] {
         guard let data = try? Data(contentsOf: claudeSettingsURL(home)),
@@ -138,6 +211,28 @@ import Testing
         }
     }
 
+    private func claudeHandlers(_ home: URL, event: String) -> [[String: Any]] {
+        guard let data = try? Data(contentsOf: claudeSettingsURL(home)),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hooks = root["hooks"] as? [String: Any],
+              let groups = hooks[event] as? [[String: Any]]
+        else { return [] }
+        return groups.flatMap { group in
+            group["hooks"] as? [[String: Any]] ?? []
+        }
+    }
+
+    private func codexHandlers(_ home: URL, event: String) -> [[String: Any]] {
+        guard let data = try? Data(contentsOf: codexHooksURL(home)),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hooks = root["hooks"] as? [String: Any],
+              let groups = hooks[event] as? [[String: Any]]
+        else { return [] }
+        return groups.flatMap { group in
+            group["hooks"] as? [[String: Any]] ?? []
+        }
+    }
+
     private func runGeneratedForwarder(
         tool: String,
         event: String,
@@ -179,7 +274,21 @@ import Testing
         #!/bin/bash
         body=""
         while [ $# -gt 0 ]; do
-          if [ "$1" = "-d" ]; then body="$2"; shift 2; else shift; fi
+          case "$1" in
+            -d)
+              body="$2"; shift 2 ;;
+            --data-binary|--data)
+              src="${2:-}"; shift 2
+              if [ "$src" = "@-" ] || [ "$src" = "-" ]; then
+                body="$(cat)"
+              elif [ "${src#@}" != "$src" ]; then
+                body="$(cat "${src#@}")"
+              else
+                body="$src"
+              fi
+              ;;
+            *) shift ;;
+          esac
         done
         printf '%s' "$body" > "$FAKE_CURL_CAPTURE"
         """
@@ -308,6 +417,8 @@ import Testing
             #expect(forwarder.contains("pid=$PPID"))
             #expect(forwarder.contains("agent_pid=\"$pid\""))
             #expect(forwarder.contains("AGENTDECK_AGENT_PID=\"$agent_pid\""))
+            #expect(forwarder.contains("--data-binary @-"))
+            #expect(!forwarder.contains("-d \"$json\""))
             #expect(merger.contains("data.pop(\"agent_pid\", None)"))
 
             let valid = try runGeneratedMerger(
@@ -672,6 +783,238 @@ import Testing
             )
 
             #expect(posted["session_id"] as? String == "uuid-1")
+        }
+    }
+
+    @Test func installThrowsOnUnreadableClaudeSettings() throws {
+        try withTempHome { home in
+            let url = claudeSettingsURL(home)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let original = Data("{not json".utf8)
+            try original.write(to: url)
+
+            #expect(throws: HookInstaller.Error.unreadableConfig(url)) {
+                try HookInstaller.install(port: AgentDeck.port)
+            }
+            #expect(try Data(contentsOf: url) == original)
+            #expect(FileManager.default.fileExists(atPath: grokHooksURL(home).path))
+            #expect(FileManager.default.fileExists(atPath: codexHooksURL(home).path))
+        }
+    }
+
+    @Test func installThrowsOnUnreadableCodexHooks() throws {
+        try withTempHome { home in
+            let url = codexHooksURL(home)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let original = Data("{not json".utf8)
+            try original.write(to: url)
+
+            #expect(throws: HookInstaller.Error.unreadableConfig(url)) {
+                try HookInstaller.install(port: AgentDeck.port)
+            }
+            #expect(try Data(contentsOf: url) == original)
+            #expect(FileManager.default.fileExists(atPath: grokHooksURL(home).path))
+            #expect(claudeCommands(home, event: "PreToolUse").contains { $0.contains(scriptPath) })
+        }
+    }
+
+    @Test func installThrowsWhenClaudeHooksValueIsNotAnObject() throws {
+        try withTempHome { home in
+            seedClaude(home, ["hooks": ["not", "an", "object"], "statusLine": "keep-me"])
+            let url = claudeSettingsURL(home)
+            let original = try Data(contentsOf: url)
+
+            #expect(throws: HookInstaller.Error.unreadableConfig(url)) {
+                try HookInstaller.install(port: AgentDeck.port)
+            }
+            #expect(try Data(contentsOf: url) == original)
+        }
+    }
+
+    @Test func installDoesNotRewriteClaudeWhenEntriesAreAlreadyCorrect() throws {
+        try withTempHome { home in
+            let foreign: [String: Any] = [
+                "matcher": "",
+                "hooks": [["type": "command", "command": "/opt/othertool/hook.sh run"]],
+            ]
+            seedCorrectClaude(home, extraPreToolUse: foreign)
+            let before = try Data(contentsOf: claudeSettingsURL(home))
+
+            try HookInstaller.install(port: AgentDeck.port)
+
+            #expect(try Data(contentsOf: claudeSettingsURL(home)) == before)
+            #expect(claudeCommands(home, event: "PreToolUse").contains("/opt/othertool/hook.sh run"))
+        }
+    }
+
+    @Test func installDoesNotRewriteCodexWhenEntriesAreAlreadyCorrect() throws {
+        try withTempHome { home in
+            let foreign: [String: Any] = [
+                "matcher": ".*",
+                "hooks": [["type": "command", "command": "/opt/othertool/hook.sh run"]],
+            ]
+            seedCorrectCodex(home, extraPreToolUse: foreign)
+            let before = try Data(contentsOf: codexHooksURL(home))
+
+            try HookInstaller.install(port: AgentDeck.port)
+
+            #expect(try Data(contentsOf: codexHooksURL(home)) == before)
+            #expect(codexCommands(home, event: "PreToolUse").contains("/opt/othertool/hook.sh run"))
+        }
+    }
+
+    @Test func installHealsCodexEntryWithWrongMatcher() throws {
+        try withTempHome { home in
+            seedCorrectCodex(home, matcher: "")
+            let before = try Data(contentsOf: codexHooksURL(home))
+
+            try HookInstaller.install(port: AgentDeck.port)
+
+            #expect(try Data(contentsOf: codexHooksURL(home)) != before)
+            let data = try Data(contentsOf: codexHooksURL(home))
+            let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let hooks = try #require(root["hooks"] as? [String: Any])
+            let groups = try #require(hooks["PreToolUse"] as? [[String: Any]])
+            let ours = groups.filter { group in
+                ((group["hooks"] as? [[String: Any]]) ?? []).contains {
+                    ($0["command"] as? String)?.contains(scriptPath) == true
+                }
+            }
+            #expect(ours.count == 1)
+            #expect(ours.first?["matcher"] as? String == ".*")
+        }
+    }
+
+    @Test func installHealsClaudeEntryMissingTimeout() throws {
+        try withTempHome { home in
+            seedCorrectClaude(home, timeout: nil)
+            let before = try Data(contentsOf: claudeSettingsURL(home))
+
+            try HookInstaller.install(port: AgentDeck.port)
+
+            #expect(try Data(contentsOf: claudeSettingsURL(home)) != before)
+            let ours = claudeHandlers(home, event: "PreToolUse").filter {
+                ($0["command"] as? String)?.contains(scriptPath) == true
+            }
+            #expect(ours.count == 1)
+            #expect(ours.first?["timeout"] as? Int == 10)
+            #expect(ours.first?["command"] as? String == "'\(scriptPath)' claude PreToolUse")
+        }
+    }
+
+    @Test func installLeavesUnknownEventShapeAlone() throws {
+        try withTempHome { home in
+            seedClaude(home, [
+                "statusLine": "keep-me",
+                "hooks": ["PreToolUse": "not-an-array"],
+            ])
+
+            try HookInstaller.install(port: AgentDeck.port)
+
+            let data = try Data(contentsOf: claudeSettingsURL(home))
+            let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let hooks = try #require(root["hooks"] as? [String: Any])
+            #expect(root["statusLine"] as? String == "keep-me")
+            #expect(hooks["PreToolUse"] as? String == "not-an-array")
+            #expect(claudeCommands(home, event: "Stop").contains { $0.contains(scriptPath) })
+            #expect(claudeCommands(home, event: "SessionStart").contains { $0.contains(scriptPath) })
+
+            let afterFirst = try Data(contentsOf: claudeSettingsURL(home))
+            try HookInstaller.install(port: AgentDeck.port)
+            #expect(try Data(contentsOf: claudeSettingsURL(home)) == afterFirst)
+        }
+    }
+
+    @Test func installDoesNotRewriteClaudeWhenOneEventHasUnknownShape() throws {
+        try withTempHome { home in
+            seedCorrectClaude(home)
+            var root = try JSONSerialization.jsonObject(
+                with: Data(contentsOf: claudeSettingsURL(home))) as! [String: Any]
+            var hooks = root["hooks"] as! [String: Any]
+            hooks["PreToolUse"] = "not-an-array"
+            root["hooks"] = hooks
+            try JSONSerialization.data(withJSONObject: root).write(to: claudeSettingsURL(home))
+            let before = try Data(contentsOf: claudeSettingsURL(home))
+
+            try HookInstaller.install(port: AgentDeck.port)
+
+            #expect(try Data(contentsOf: claudeSettingsURL(home)) == before)
+        }
+    }
+
+    @Test func claudeAndCodexEntriesIncludeTimeout10() throws {
+        try withTempHome { home in
+            try HookInstaller.install(port: AgentDeck.port)
+
+            let claudeEvents = [
+                "SessionStart", "UserPromptSubmit", "PreToolUse", "Notification",
+                "Stop", "SubagentStop", "SessionEnd",
+            ]
+            for event in claudeEvents {
+                let ours = claudeHandlers(home, event: event).filter {
+                    ($0["command"] as? String)?.contains(scriptPath) == true
+                }
+                #expect(ours.count == 1)
+                #expect(ours.first?["timeout"] as? Int == 10)
+            }
+
+            let codexEvents = [
+                "SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "Stop",
+                "SessionEnd",
+            ]
+            for event in codexEvents {
+                let ours = codexHandlers(home, event: event).filter {
+                    ($0["command"] as? String)?.contains(scriptPath) == true
+                }
+                #expect(ours.count == 1)
+                #expect(ours.first?["timeout"] as? Int == 10)
+            }
+        }
+    }
+
+    @Test func mergerDropsKeysTheListenerDoesNotDecode() throws {
+        try withTempHome { _ in
+            try HookInstaller.install(port: AgentDeck.port)
+
+            let huge = String(repeating: "x", count: 100_000)
+            let result = try runGeneratedMerger(
+                input: [
+                    "session_id": "s1",
+                    "tool_input": huge,
+                    "prompt": "secret",
+                    "toolInput": huge,
+                ],
+                discoveredPID: nil
+            )
+            #expect(result["session_id"] as? String == "s1")
+            #expect(result["tool_input"] == nil)
+            #expect(result["prompt"] == nil)
+            #expect(result["toolInput"] == nil)
+        }
+    }
+
+    @Test func forwarderPostsLargePayloadViaStdin() throws {
+        let tree: [Int32: FakeProcess] = [
+            ProcessInfo.processInfo.processIdentifier:
+                FakeProcess(comm: "sh", ppid: 9603, tty: "??"),
+            9603: FakeProcess(comm: "/usr/local/bin/claude", ppid: 1, tty: "ttys003"),
+        ]
+
+        try withTempHome { _ in
+            try HookInstaller.install(port: AgentDeck.port)
+
+            let huge = String(repeating: "y", count: 100_000)
+            let posted = try runGeneratedForwarder(
+                tool: "claude",
+                event: "PreToolUse",
+                tree: tree,
+                stdin: ["session_id": "s-large", "tool_input": huge]
+            )
+
+            #expect(posted["session_id"] as? String == "s-large")
+            #expect(posted["tool_input"] == nil)
         }
     }
 }
