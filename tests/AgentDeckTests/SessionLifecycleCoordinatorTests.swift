@@ -475,6 +475,32 @@ import Testing
         #expect(system.observer.cancelCount[process] == 1)
     }
 
+    @Test func dropAllSessionsDoesNotTombstoneALiveSessionId() {
+        let system = makeSystem()
+        let process = processIdentity(pid: 302)
+
+        system.lifecycle.receive(
+            makeEvent(
+                "SessionStart", id: "fg", tool: "claude", tty: "ttys071",
+                agentPID: process.pid
+            ),
+            processLookup: .running(process)
+        )
+        system.lifecycle.dropAllSessions()
+        #expect(system.store.sessions.isEmpty)
+
+        system.lifecycle.receive(
+            makeEvent(
+                "UserPromptSubmit", id: "fg", tool: "claude", tty: "ttys071",
+                agentPID: process.pid
+            ),
+            processLookup: .running(process)
+        )
+
+        #expect(system.store.sessions.map(\.id) == ["fg"])
+        #expect(system.lifecycle.trackedLifecycleCount == 1)
+    }
+
     @Test func interactiveRunsAreStillTrackedWhenHeadlessIsAbsentOrFalse() {
         let system = makeSystem()
 

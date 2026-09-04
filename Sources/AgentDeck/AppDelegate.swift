@@ -107,9 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (so the alert can open behind another app, per the comment inside),
         // meaning it could otherwise sit unanswered indefinitely — gating the
         // hotkey and notification prompt on a modal nobody's looking at.
-        // Silent on the AGENTDECK_NO_INSTALL smoke-test path (see the
-        // hook-install block above) for the same reason: a modal alert would
-        // hang a headless/scripted run waiting on user input.
+        // Silent on the AGENTDECK_NO_INSTALL smoke-test path for the same
+        // reason: a modal alert would hang a headless/scripted run waiting
+        // on user input.
         promptForLoginItemIfNeeded()
     }
 

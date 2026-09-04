@@ -78,13 +78,15 @@ final class SessionLifecycleCoordinator {
     }
 
     /// Tears down every tracked lifecycle — what disabling session tracking
-    /// calls, so rows, process watches, and pane ownership go immediately
-    /// rather than lingering until each session happens to end.
+    /// calls, so rows, process watches, and pane ownership go immediately.
+    /// Does **not** tombstone ids: re-enable must accept Stop/Notification
+    /// from a CLI that is still running, not wait for a new SessionStart.
     func dropAllSessions() {
-        let ids = Set(lifecycleByID.keys).union(store.sessions.map(\.id))
-        for id in ids {
-            terminate(sessionID: id)
+        for id in Array(lifecycleByID.keys) {
+            forgetLifecycle(sessionID: id)
         }
+        endedAt.removeAll()
+        store.resetAll()
     }
 
     init(store: SessionStore, processObserver: any ProcessExitObserving) {

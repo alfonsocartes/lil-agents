@@ -3,8 +3,8 @@ import Network
 import Testing
 @testable import AgentDeck
 
-/// Serialized so two tests never bind 54173 at once. Skip bind-again if
-/// something else (a live lil agents) already owns the port.
+/// Serialized so two tests never bind 54173 at once. Skip bind-again only
+/// when something else already owns the port *before* this test starts it.
 @MainActor
 @Suite(.serialized) struct EventListenerTests {
     private func makeListener() -> EventListener {
@@ -27,41 +27,40 @@ import Testing
         #expect(!listener.isRunning)
     }
 
+    @Test func startWhileRunningIsANoOp() async {
+        guard !(await tcpConnects()) else { return }
+        let listener = makeListener()
+        listener.start()
+        let bound = await waitUntil { await tcpConnects() }
+        #expect(bound)
+        listener.start()
+        #expect(listener.isRunning)
+        listener.stop()
+    }
+
     @Test func startStopStartBindsAgain() async {
-        if await tcpConnects() {
-            return
-        }
+        guard !(await tcpConnects()) else { return }
 
         let listener = makeListener()
         listener.start()
         let bound = await waitUntil { await tcpConnects() }
-        guard bound else {
-            listener.stop()
-            return
-        }
+        #expect(bound)
         #expect(listener.isRunning)
 
         listener.stop()
         #expect(!listener.isRunning)
         _ = await waitUntil { await !tcpConnects() }
 
-        if await tcpConnects() {
-            return
-        }
-
         listener.start()
         let rebound = await waitUntil { await tcpConnects() }
-        guard rebound else {
-            listener.stop()
-            return
-        }
+        #expect(rebound)
         #expect(listener.isRunning)
         listener.stop()
         #expect(!listener.isRunning)
     }
 
     private func waitUntil(_ condition: @escaping () async -> Bool) async -> Bool {
-        let deadline = Date().addingTimeInterval(1)
+        let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
             if await condition() { return true }
             try? await Task.sleep(nanoseconds: 20_000_000)

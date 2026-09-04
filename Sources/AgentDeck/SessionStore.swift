@@ -178,6 +178,16 @@ final class SessionStore {
         rebuild()
     }
 
+    /// Drops every row without SessionEnd tombstones. Used when session
+    /// tracking is switched off so a later re-enable can accept events from
+    /// a CLI that is still running.
+    func resetAll() {
+        byID.removeAll()
+        removedAt.removeAll()
+        lastNotified.removeAll()
+        rebuild()
+    }
+
     /// Fires the notifier on each transition INTO an attention state
     /// (working → idle/waitingApproval, or a brand-new session that arrives
     /// already in one of those states). Never fires for `.working`, and
