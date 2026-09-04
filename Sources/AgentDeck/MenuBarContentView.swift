@@ -192,9 +192,11 @@ struct MenuBarContentView: View {
 
 // MARK: - Status-item label
 
-/// The `MenuBarExtra` label. Observes the store, stay-awake controller, and
-/// usage store: the attention dot (unchanged) plus, when at least one usage
-/// provider is enabled, two stacked mini-rows of symbol + percent beside it.
+/// The `MenuBarExtra` label. Observes the store, stay-awake controller,
+/// usage store, and session-tracking flag: the attention dot plus, when at
+/// least one usage provider is enabled, two stacked mini-rows of symbol +
+/// percent beside it. When tracking is off the attention dot is omitted so
+/// usage-only mode is just the gauges (stay-awake still shows the bolt).
 ///
 /// The attention image renders via AttentionIcon with
 /// `.renderingMode(.original)` to keep its traffic-light tint (a template
@@ -213,13 +215,14 @@ struct StatusIconLabel: View {
     let store: SessionStore
     let awake: StayAwakeController
     let usage: UsageStore
+    let settings: AppSettings
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if !usageRows.isEmpty,
            let composite = UsageMenuBarIcon.labelImage(
-               attention: AttentionIcon.image(attention: store.attention, isAwake: awake.isAwake),
+               attention: sessionGlyph,
                rows: menuBarIconRows,
                darkAppearance: colorScheme == .dark
            ) {
@@ -228,6 +231,16 @@ struct StatusIconLabel: View {
         } else {
             attentionImage
         }
+    }
+
+    /// Traffic-light / stay-awake mark. Omitted when session tracking is off
+    /// (unless stay-awake is on) so usage-only mode is just the gauges.
+    private var sessionGlyph: NSImage? {
+        if settings.sessionsEnabled {
+            return AttentionIcon.image(attention: store.attention, isAwake: awake.isAwake)
+        }
+        guard awake.isAwake else { return nil }
+        return AttentionIcon.image(attention: .none, isAwake: true)
     }
 
     /// Usage disabled (or composite construction failed): today's exact

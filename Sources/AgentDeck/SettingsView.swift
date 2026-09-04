@@ -19,27 +19,32 @@ struct SettingsView: View {
     @State private var confirmingUninstall = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            generalSection
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 28) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        generalSection
+                        Divider()
+                        sessionsSection
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            Divider()
+                    VStack(alignment: .leading, spacing: 16) {
+                        notificationsSection
+                        Divider()
+                        usageSection
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
-            notificationsSection
+                Divider()
 
-            Divider()
-
-            sessionsSection
-
-            Divider()
-
-            usageSection
-
-            Divider()
-
-            uninstallSection
+                uninstallSection
+            }
+            .padding(16)
         }
-        .padding(20)
-        .frame(width: 380)
+        .frame(minWidth: 560, idealWidth: 580, maxWidth: 640)
+        .frame(minHeight: 360, idealHeight: 440, maxHeight: 520)
         .onAppear { loginItem.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             loginItem.refresh()
@@ -61,7 +66,7 @@ struct SettingsView: View {
             set: { loginItem.isEnabled = $0 }
         )
 
-        return VStack(alignment: .leading, spacing: 14) {
+        return VStack(alignment: .leading, spacing: 8) {
             Text("General")
                 .font(.headline)
 
@@ -69,7 +74,7 @@ struct SettingsView: View {
                 .disabled(!loginItem.isAvailable)
 
             if loginItem.isAvailable {
-                Text("Starts lil agents automatically when you log in — menu bar icon and session overlay, same as launching it by hand.")
+                Text("Starts in the menu bar when you log in.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -104,13 +109,13 @@ struct SettingsView: View {
     }
 
     private var notificationsSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Notifications")
                 .font(.headline)
 
             Toggle("Enable notifications", isOn: $settings.notificationsEnabled)
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Toggle("Notify when a session needs approval", isOn: $settings.notifyOnApproval)
                 Toggle("Notify when a session finishes its turn", isOn: $settings.notifyOnIdle)
                 Toggle("Play sound", isOn: $settings.playSound)
@@ -119,7 +124,7 @@ struct SettingsView: View {
             .disabled(!settings.notificationsEnabled)
             .foregroundStyle(settings.notificationsEnabled ? .primary : .secondary)
 
-            Text("Alerts fire once, right when a session starts needing you — not on every update while it waits.")
+            Text("Fires once when a session starts needing you.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -133,21 +138,21 @@ struct SettingsView: View {
     /// than real sessions. The toggle exists because that is not universally
     /// true — see `AppSettings.showBackgroundSessions`.
     private var sessionsSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Sessions")
                 .font(.headline)
 
             Toggle("Track sessions", isOn: $settings.sessionsEnabled)
 
-            Text("Wires lifecycle hooks into Claude Code, Codex CLI, and Grok CLI. Off removes those hooks. The overlay and session list only exist while this is on.")
+            Text("Installs CLI hooks. Off removes them and hides the overlay.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Toggle("Show background agents", isOn: $settings.showBackgroundSessions)
 
-                Text("Agents with no terminal of their own — scripted runs like `codex exec`, `claude -p`, and grok headless, CI jobs, and editor-hosted sessions. They're hidden by default because there's no pane to jump to, and one agent spawning others can bury the sessions you're actually watching.")
+                Text("Headless, CI, and editor-hosted agents. Hidden by default.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -164,7 +169,7 @@ struct SettingsView: View {
     /// polling that provider's CLI credentials and its own vendor's servers,
     /// nothing else.
     private var usageSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("AI usage")
                 .font(.headline)
 
@@ -172,14 +177,14 @@ struct SettingsView: View {
             Toggle("Show Codex usage", isOn: $settings.codexUsageEnabled)
             Toggle("Show Grok usage", isOn: $settings.grokUsageEnabled)
 
-            Text("Reads the CLI's local sign-in and contacts Anthropic/OpenAI/xAI's servers for your current usage. Claude's credentials are read via macOS's built-in `security` tool, so no permission prompt appears.")
+            Text("Reads the CLI sign-in and asks Anthropic, OpenAI, or xAI for current usage.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Toggle("Send tokens to iPhone", isOn: $settings.shareTokensWithIPhone)
 
-            Text("Copies those same CLI sign-ins into iCloud Keychain so lil usage on your iPhone can use them. Same Apple ID, iCloud Keychain on, on this Mac and the phone. Can take a minute. The iPhone app still works without this — tap Sign in there.")
+            Text("Copies those sign-ins into iCloud Keychain for lil usage. Same Apple ID, iCloud Keychain on. The iPhone app can also Sign in there.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -194,7 +199,7 @@ struct SettingsView: View {
     }
 
     private var uninstallSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Uninstall")
                 .font(.headline)
 
