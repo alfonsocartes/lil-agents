@@ -85,7 +85,6 @@ final class SessionLifecycleCoordinator {
         for id in Array(lifecycleByID.keys) {
             forgetLifecycle(sessionID: id)
         }
-        endedAt.removeAll()
         store.resetAll()
     }
 

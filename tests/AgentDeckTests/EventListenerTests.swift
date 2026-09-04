@@ -59,6 +59,27 @@ import Testing
         #expect(!listener.isRunning)
     }
 
+    @Test func stopIgnoresEventsAfterUnbind() async {
+        guard !(await tcpConnects()) else { return }
+        let store = SessionStore()
+        let observer = FakeProcessExitObserver()
+        let lifecycle = SessionLifecycleCoordinator(store: store, processObserver: observer)
+        let token = "test-token"
+        let listener = EventListener(
+            lifecycle: lifecycle,
+            processResolver: DarwinProcessIdentityResolver(),
+            token: token
+        )
+        listener.start()
+        #expect(await waitUntil { await tcpConnects() })
+
+        listener.stop()
+        #expect(!listener.isRunning)
+        await postHook(token: token, event: "SessionStart", id: "after-stop")
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        #expect(store.sessions.isEmpty)
+    }
+
     private func waitUntil(_ condition: @escaping () async -> Bool) async -> Bool {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
@@ -66,6 +87,20 @@ import Testing
             try? await Task.sleep(nanoseconds: 20_000_000)
         }
         return await condition()
+    }
+
+    private func postHook(token: String, event: String, id: String) async {
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(AgentDeck.port)/event")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(token, forHTTPHeaderField: "X-AgentDeck-Token")
+        request.timeoutInterval = 1
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "tool": "claude",
+            "event": event,
+            "session_id": id,
+        ])
+        _ = try? await URLSession.shared.data(for: request)
     }
 
     private func tcpConnects() async -> Bool {

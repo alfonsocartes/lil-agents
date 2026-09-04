@@ -501,6 +501,31 @@ import Testing
         #expect(system.lifecycle.trackedLifecycleCount == 1)
     }
 
+    @Test func dropAllSessionsKeepsSessionEndTombstones() {
+        let system = makeSystem()
+        let oldProcess = processIdentity(pid: 303)
+        let newProcess = processIdentity(pid: 304)
+
+        system.lifecycle.receive(
+            makeEvent("SessionStart", id: "old", agentPID: oldProcess.pid),
+            processLookup: .running(oldProcess)
+        )
+        system.lifecycle.receive(
+            makeEvent("SessionEnd", id: "old", agentPID: oldProcess.pid),
+            processLookup: .notFound
+        )
+        #expect(system.store.sessions.isEmpty)
+
+        system.lifecycle.dropAllSessions()
+
+        system.lifecycle.receive(
+            makeEvent("Stop", id: "old", agentPID: oldProcess.pid),
+            processLookup: .running(newProcess)
+        )
+        #expect(system.store.sessions.isEmpty)
+        #expect(system.lifecycle.trackedLifecycleCount == 0)
+    }
+
     @Test func interactiveRunsAreStillTrackedWhenHeadlessIsAbsentOrFalse() {
         let system = makeSystem()
 

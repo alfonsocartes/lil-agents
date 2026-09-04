@@ -178,13 +178,12 @@ final class SessionStore {
         rebuild()
     }
 
-    /// Drops every row without SessionEnd tombstones. Used when session
-    /// tracking is switched off so a later re-enable can accept events from
-    /// a CLI that is still running.
+    /// Drops visible rows without SessionEnd or dismiss tombstones. Used
+    /// when session tracking is switched off so a later re-enable can
+    /// accept events from a CLI that is still running, while a session that
+    /// already ended or that the user removed stays gone.
     func resetAll() {
         byID.removeAll()
-        removedAt.removeAll()
-        lastNotified.removeAll()
         rebuild()
     }
 

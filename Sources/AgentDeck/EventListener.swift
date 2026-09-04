@@ -100,11 +100,11 @@ final class EventListener: Sendable {
                 host: "127.0.0.1",
                 port: NWEndpoint.Port(rawValue: AgentDeck.port)!
             )
-            let listener = try NWListener(using: params)
-            listener.newConnectionHandler = { [weak self] conn in
+            let newListener = try NWListener(using: params)
+            newListener.newConnectionHandler = { [weak self] conn in
                 self?.handle(conn)
             }
-            listener.stateUpdateHandler = { [weak self] state in
+            newListener.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
                 switch state {
                 case .ready:
@@ -115,20 +115,40 @@ final class EventListener: Sendable {
                     // events — now including the bearer token — at whatever else
                     // is squatting on the port. Make this loud instead.
                     NSLog("AgentDeck: ⚠️ FAILED to bind 127.0.0.1:\(AgentDeck.port) — \(err). Another process may already be bound to this port and intercepting hook events; AgentDeck will not receive session updates until this is resolved.")
-                    self.listener.withLock { slot in
-                        if slot === listener { slot = nil }
-                    }
-                    listener.cancel()
+                    self.drop(newListener)
+                    newListener.cancel()
                     self.scheduleRetry(generation: generation, attempt: attempt + 1)
                 default:
                     break
                 }
             }
-            listener.start(queue: queue)
-            self.listener.withLock { $0 = listener }
+            // Publish the listener before start() so a re-entrant `.failed`
+            // can drop this object instead of leaving a dead one in the slot
+            // after we return. Re-check generation under the slot lock so
+            // stop() that already bumped the generation cannot lose the race.
+            let keep = bindGeneration.withLock { current -> Bool in
+                guard current == generation else { return false }
+                listener.withLock { $0 = newListener }
+                return true
+            }
+            if !keep {
+                newListener.cancel()
+                return
+            }
+            newListener.start(queue: queue)
+            if bindGeneration.withLock({ $0 != generation }) {
+                drop(newListener)
+                newListener.cancel()
+            }
         } catch {
             NSLog("AgentDeck could not start listener: \(error)")
             scheduleRetry(generation: generation, attempt: attempt + 1)
+        }
+    }
+
+    private func drop(_ candidate: NWListener) {
+        listener.withLock { slot in
+            if slot === candidate { slot = nil }
         }
     }
 
@@ -265,9 +285,10 @@ final class EventListener: Sendable {
         let processLookup = event.agent_pid.flatMap { pid in
             pid > 1 ? processResolver.identity(for: pid) : nil
         }
+        let generation = bindGeneration.withLock { $0 }
         guard isRunning else { return }
         Task { @MainActor in
-            guard self.isRunning else { return }
+            guard self.bindGeneration.withLock({ $0 == generation }), self.isRunning else { return }
             self.lifecycle.receive(event, processLookup: processLookup)
         }
     }
