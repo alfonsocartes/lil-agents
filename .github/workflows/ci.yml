@@ -1,0 +1,64 @@
+# CI workflow for "lil agents".
+#
+# Runs `swift build` and `swift test` on every push and pull request, so a
+# compile error or failing test surfaces immediately instead of first being
+# discovered at release-tag time by scripts/release.sh (which only runs
+# `swift build`, never `swift test` — see release.yml).
+#
+# Deliberately does not touch codesigning/notarization secrets, so it runs
+# cleanly on forks and PRs without any credentials configured.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Package.swift requires swift-tools-version 6.2 (for platforms: [.macOS(.v26)]);
+      # the image default can be older, so select an installed Xcode explicitly. Images
+      # can carry a beta Xcode alongside the stable release (e.g. Xcode_26.2_beta.app
+      # next to Xcode_26.1.app); `sort -V` would pick the beta since its version string
+      # sorts higher, which has broken this pipeline twice before (see release.yml).
+      # Filter betas out before sorting and fail loudly if nothing non-beta remains.
+      - name: Select latest Xcode
+        run: |
+          set -euo pipefail
+          LATEST="$(ls -d /Applications/Xcode_*.app | grep -iv beta | sort -V | tail -1)"
+          if [[ -z "$LATEST" ]]; then
+            echo "error: no non-beta Xcode installation found under /Applications" >&2
+            ls -d /Applications/Xcode_*.app >&2 || true
+            exit 1
+          fi
+          echo "Selecting $LATEST"
+          sudo xcode-select -s "$LATEST/Contents/Developer"
+          swift --version
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/.cache/org.swift.swiftpm
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: swift build
+        run: swift build
+
+      - name: swift test
+        run: swift test
