@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "AgentDeck",
+    name: "LilAgents",
     platforms: [.macOS(.v26), .iOS(.v18)],
     dependencies: [
         // Sparkle powers in-app auto-updates (Check for Updates… + background checks).
@@ -11,11 +11,11 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "AgentDeck",
+            name: "LilAgents",
             dependencies: [
                 .product(name: "Sparkle", package: "Sparkle", condition: .when(platforms: [.macOS])),
             ],
-            path: "Sources/AgentDeck",
+            path: "Sources/LilAgents",
             resources: [
                 .process("Resources"),
             ],
@@ -34,11 +34,11 @@ let package = Package(
             path: "Sources/UsageCore"
         ),
         .testTarget(
-            name: "AgentDeckTests",
-            dependencies: ["AgentDeck"],
-            path: "tests/AgentDeckTests",
+            name: "LilAgentsTests",
+            dependencies: ["LilAgents"],
+            path: "tests/LilAgentsTests",
             resources: [
-                .process("../../Sources/AgentDeck/Resources"),
+                .process("../../Sources/LilAgents/Resources"),
             ]
         ),
         .testTarget(

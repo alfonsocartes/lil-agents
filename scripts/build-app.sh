@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build AgentDeck.app — a menu-bar-less macOS agent app — from the Swift package.
+# Build lil agents.app — a menu-bar-less macOS agent app — from the Swift package.
 # Usage: scripts/build-app.sh [debug|release]   (default: release)
 set -euo pipefail
 
@@ -14,7 +14,7 @@ APP_DIR="$BUILD_DIR/$APP"
 echo "==> swift build -c $CONFIG"
 swift build -c "$CONFIG"
 
-BIN="$(swift build -c "$CONFIG" --show-bin-path)/AgentDeck"
+BIN="$(swift build -c "$CONFIG" --show-bin-path)/LilAgents"
 if [[ ! -x "$BIN" ]]; then
     echo "error: built binary not found at $BIN" >&2
     exit 1
@@ -23,14 +23,14 @@ fi
 echo "==> Assembling $APP"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$APP_DIR/Contents/Frameworks"
-cp "$BIN" "$APP_DIR/Contents/MacOS/AgentDeck"
+cp "$BIN" "$APP_DIR/Contents/MacOS/LilAgents"
 cp "$ROOT/packaging/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$ROOT/packaging/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 # Logos live in Contents/Resources so codesign sees a normal app layout.
-# Do not put AgentDeck_AgentDeck.bundle at the .app root — that is
+# Do not put LilAgents_LilAgents.bundle at the .app root — that is
 # "unsealed contents present in the bundle root" and fails Developer ID.
-cp "$ROOT/Sources/AgentDeck/Resources/"*.svg "$APP_DIR/Contents/Resources/"
+cp "$ROOT/Sources/LilAgents/Resources/"*.svg "$APP_DIR/Contents/Resources/"
 
 echo "==> Embedding Sparkle.framework"
 SPARKLE_FRAMEWORK="$(find .build -path '*macos-arm64_x86_64/Sparkle.framework' -type d | head -1)"
@@ -40,7 +40,7 @@ if [[ -z "$SPARKLE_FRAMEWORK" ]]; then
 fi
 cp -R "$SPARKLE_FRAMEWORK" "$APP_DIR/Contents/Frameworks/Sparkle.framework"
 
-EXECUTABLE="$APP_DIR/Contents/MacOS/AgentDeck"
+EXECUTABLE="$APP_DIR/Contents/MacOS/LilAgents"
 if ! otool -l "$EXECUTABLE" | grep -q LC_RPATH; then
     echo "==> LC_RPATH missing — adding @executable_path/../Frameworks"
     install_name_tool -add_rpath "@executable_path/../Frameworks" "$EXECUTABLE"
@@ -73,11 +73,11 @@ codesign --force --sign "$CODESIGN_IDENTITY" "$SPARKLE_DIR/Versions/B/Updater.ap
     echo "warning: codesign failed for Updater.app"
 codesign --force --sign "$CODESIGN_IDENTITY" "$SPARKLE_DIR" >/dev/null 2>&1 || \
     echo "warning: codesign failed for Sparkle.framework"
-# Don't attach packaging/AgentDeck.entitlements: keychain-access-groups
+# Don't attach packaging/LilAgents.entitlements: keychain-access-groups
 # without a Developer ID profile makes launchd refuse to spawn the app.
 codesign --force --options runtime --sign "$CODESIGN_IDENTITY" "$APP_DIR" >/dev/null 2>&1 || \
     codesign --force --sign "$CODESIGN_IDENTITY" "$APP_DIR" >/dev/null 2>&1 || \
     echo "warning: codesign failed (app will still run, but TCC grants may not persist)"
 
 echo "==> Done: $APP_DIR"
-echo "Run it with:  open \"$APP_DIR\"   (or: \"$APP_DIR/Contents/MacOS/AgentDeck\" for logs)"
+echo "Run it with:  open \"$APP_DIR\"   (or: \"$APP_DIR/Contents/MacOS/LilAgents\" for logs)"

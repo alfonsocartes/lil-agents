@@ -53,7 +53,7 @@ public enum UsageFetchError: Error, Equatable, Codable, Sendable {
     case badResponse(String)
 }
 
-/// One provider's usage lifecycle. Mirrors AgentDeck's `ProviderUsageState`
+/// One provider's usage lifecycle. Mirrors LilAgents' `ProviderUsageState`
 /// so the iOS app/widget can use the same vocabulary.
 public enum ProviderUsageState: Equatable, Sendable {
     case disabled

@@ -119,8 +119,12 @@ jobs:
         run: scripts/release.sh "$RELEASE_VERSION"
 
       # -----------------------------------------------------------------
-      # Update appcast.xml with the new <item>, then commit + push to main.
-      # Required because SUFeedURL points at raw.githubusercontent.com/main.
+      # Generate appcast.xml with the new <item> and validate it, but do not
+      # publish it yet. SUFeedURL points at raw.githubusercontent.com/main,
+      # so main is read live by every installed client: if the appcast reached
+      # main before the release assets exist, a client could be offered an
+      # update whose enclosure URL 404s. Create the release first (below),
+      # then commit + push the appcast once the assets are confirmed to exist.
       # -----------------------------------------------------------------
       - name: Update appcast.xml
         id: appcast
@@ -138,6 +142,19 @@ jobs:
           python3 scripts/update-appcast.py
           xmllint --noout appcast.xml
 
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RAW_REF: ${{ steps.version.outputs.raw_ref }}
+        run: |
+          set -euo pipefail
+          gh release create "$RAW_REF" \
+            "dist/lil-agents-${RELEASE_VERSION}.zip" \
+            "dist/lil-agents-${RELEASE_VERSION}.dmg" \
+            --title "lil agents ${RELEASE_VERSION}" \
+            --generate-notes
+
       - name: Commit and push appcast.xml
         env:
           RAW_REF: ${{ steps.version.outputs.raw_ref }}
@@ -152,16 +169,3 @@ jobs:
             git commit -m "chore: update appcast for $RAW_REF"
             git push origin HEAD:main
           fi
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-          RAW_REF: ${{ steps.version.outputs.raw_ref }}
-        run: |
-          set -euo pipefail
-          gh release create "$RAW_REF" \
-            "dist/lil-agents-${RELEASE_VERSION}.zip" \
-            "dist/lil-agents-${RELEASE_VERSION}.dmg" \
-            --title "lil agents ${RELEASE_VERSION}" \
-            --generate-notes

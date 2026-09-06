@@ -1,6 +1,6 @@
 import Foundation
 
-// Copied from AgentDeck CodexUsageFetcher.swift, 2026-08-22; keep decode in sync.
+// Copied from LilAgents CodexUsageFetcher.swift, 2026-08-22; keep decode in sync.
 // Credentials are injected (no `~/.codex/auth.json` reads).
 
 public struct CodexCredentials: Equatable, Sendable {
@@ -49,7 +49,7 @@ public struct CodexUsageFetcher: UsageProviding, Sendable {
             request.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-Id")
         }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("codex-cli/agentdeck-usage", forHTTPHeaderField: "User-Agent")
+        request.setValue("codex-cli/lilagents-usage", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await HTTPRetryAfter.perform(request, transport: transport)
         guard let http = response as? HTTPURLResponse else {

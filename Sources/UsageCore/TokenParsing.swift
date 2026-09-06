@@ -78,7 +78,7 @@ public enum TokenParsing {
 
     // MARK: - Claude CLI `.credentials.json`
 
-    /// Same shape as AgentDeck's `CredentialsFile` — camelCase only, no
+    /// Same shape as LilAgents' `CredentialsFile` — camelCase only, no
     /// `convertFromSnakeCase`. Refresh tokens (if present) are ignored.
     private struct CredentialsFile: Decodable {
         struct OAuth: Decodable {
@@ -174,7 +174,7 @@ public enum TokenParsing {
     /// Unexpired pool else all; newest `expires_at` wins; a missing date
     /// sorts as newest. Expired entries are still returned if that's all
     /// there is, so the server can 401 → `.tokenExpired`. Copied from
-    /// AgentDeck `GrokUsageFetcher.readCredentials`.
+    /// LilAgents `GrokUsageFetcher.readCredentials`.
     private static func pickGrokAuthEntry(_ data: Data, now: Date) throws -> String {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase

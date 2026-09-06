@@ -89,7 +89,7 @@ echo "==> Stamping CFBundleShortVersionString=${VERSION} CFBundleVersion=${BUILD
 # which is why it's the only nested item signed with
 # --preserve-metadata=entitlements.
 #
-# Do not pass packaging/AgentDeck.entitlements here. keychain-access-groups
+# Do not pass packaging/LilAgents.entitlements here. keychain-access-groups
 # without a Developer ID provisioning profile makes launchd refuse to spawn
 # the app (POSIX 163, "can't be opened") — that shipped in 0.9.0. Mac →
 # iPhone Keychain share waits until the profile is embedded.

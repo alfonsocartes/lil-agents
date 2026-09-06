@@ -12,7 +12,7 @@ public struct UsageSettings: Equatable, Sendable {
     }
 }
 
-/// iOS counterpart to AgentDeck's `UsageStore` without Observation/timer.
+/// iOS counterpart to LilAgents' `UsageStore` without Observation/timer.
 /// Fetches enabled providers concurrently, persists a token-free snapshot.
 public actor UsageRefresher {
     public static let defaultMinAge: TimeInterval = 20 * 60

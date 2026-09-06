@@ -79,7 +79,7 @@ private let weeklyOnlyBody = """
         #expect(request?.httpMethod == "GET")
         #expect(request?.value(forHTTPHeaderField: "Authorization") == "Bearer tok-abc")
         #expect(request?.value(forHTTPHeaderField: "Accept") == "application/json")
-        #expect(request?.value(forHTTPHeaderField: "User-Agent") == "codex-cli/agentdeck-usage")
+        #expect(request?.value(forHTTPHeaderField: "User-Agent") == "codex-cli/lilagents-usage")
         #expect(request?.value(forHTTPHeaderField: "ChatGPT-Account-Id") == nil)
     }
 
