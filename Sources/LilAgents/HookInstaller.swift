@@ -307,7 +307,18 @@ enum HookInstaller {
         # — before either piece of work — is what actually keeps this
         # script's "never blocks the CLI" contract intact. Nothing below
         # this point re-reads stdin.
-        stdin_json="$(cat)"
+        #
+        # Backstop, not the fix for the wedge this guards against: every real
+        # hook invocation pipes stdin and closes it immediately (see the
+        # `printf '%s' | python3` call further down), but a CLI that ever
+        # invoked a hook with stdin inherited from an interactive terminal
+        # would otherwise block here forever waiting for EOF that never
+        # comes.
+        if [ -t 0 ]; then
+          stdin_json=""
+        else
+          stdin_json="$(cat)"
+        fi
 
         # Grok dual-fires Claude-compat hooks. Retag via GROK_HOOK_EVENT, not
         # GROK_SESSION_ID (a nested `claude` spawned from Grok might inherit it).
@@ -625,6 +636,15 @@ enum HookInstaller {
             tool = sys.argv[1] if len(sys.argv) > 1 else ""
             event = sys.argv[2] if len(sys.argv) > 2 else ""
             tty = sys.argv[3] if len(sys.argv) > 3 else ""
+
+            # Backstop, not the fix for the wedge this guards against: production
+            # always invokes this script via `printf '%s' | python3 ...`, which
+            # EOFs immediately (see writeForwarderScript above). This only
+            # protects a manual/interactive invocation from parking forever on
+            # an unbounded read instead of failing fast.
+            if sys.stdin.isatty():
+                print("merge-event: stdin is a tty, refusing to block on it", file=sys.stderr)
+                sys.exit(1)
 
             raw = sys.stdin.read()
             data = {}

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import LilAgents
 
@@ -224,19 +225,56 @@ import Testing
 
         let stdin = Pipe()
         let stdout = Pipe()
+        let stderr = Pipe()
         process.standardInput = stdin
         process.standardOutput = stdout
+        process.standardError = stderr
         try process.run()
+        // Throwing paths below (JSON encoding, the stdin write) must not
+        // orphan the child: without this, the `close()` a few lines down is
+        // skipped and the child's only guarantee of dying is `Pipe` deinit —
+        // which is exactly how a run of this helper wedged
+        // swiftpm-testing-helper for 1d19h.
+        defer { if process.isRunning { process.terminate() } }
+
+        // Watchdog: `waitUntilExit()` below parks a real thread that
+        // swift-testing's `.timeLimit` cannot cancel (it cancels the Task,
+        // not a blocked syscall), so a genuine hang here would wedge the test
+        // runner forever with no failure reported. Mirrors the bounded-wait
+        // pattern in `ClaudeUsageFetcher.defaultKeychainRead()`.
+        let timedOut = Mutex(false)
+        let timeout = DispatchWorkItem {
+            if process.isRunning {
+                timedOut.withLock { $0 = true }
+                process.terminate()
+            }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: timeout)
+        defer { timeout.cancel() }
+
         try stdin.fileHandleForWriting.write(
             JSONSerialization.data(withJSONObject: input)
         )
         try stdin.fileHandleForWriting.close()
-        process.waitUntilExit()
-        #expect(process.terminationStatus == 0)
 
-        let data = try stdout.fileHandleForReading.readToEnd() ?? Data()
+        // Drain BOTH pipes before waiting: waiting first (as this used to)
+        // is a classic pipe deadlock, latent only because the merger's
+        // `keep` filter keeps stdout small and stderr is normally empty.
+        let outData = try stdout.fileHandleForReading.readToEnd() ?? Data()
+        let errData = try stderr.fileHandleForReading.readToEnd() ?? Data()
+        process.waitUntilExit()
+
+        if timedOut.withLock({ $0 }) {
+            Issue.record("runGeneratedMerger: merge-event.py did not exit within 30s")
+        }
+        let stderrText = String(data: errData, encoding: .utf8) ?? ""
+        #expect(
+            process.terminationStatus == 0,
+            "merge-event.py exited \(process.terminationStatus): \(stderrText)"
+        )
+
         return try #require(
-            JSONSerialization.jsonObject(with: data) as? [String: Any]
+            JSONSerialization.jsonObject(with: outData) as? [String: Any]
         )
     }
 
@@ -400,12 +438,44 @@ import Testing
         process.environment = environment
 
         let input = Pipe()
+        let stderr = Pipe()
         process.standardInput = input
+        process.standardError = stderr
         try process.run()
+        // See runGeneratedMerger above: without this, a throwing write below
+        // can orphan the child with no guarantee of it ever dying.
+        defer { if process.isRunning { process.terminate() } }
+
+        // Watchdog: same reasoning as runGeneratedMerger — `.timeLimit` alone
+        // cannot cancel a thread blocked in `waitUntilExit()`.
+        let timedOut = Mutex(false)
+        let timeout = DispatchWorkItem {
+            if process.isRunning {
+                timedOut.withLock { $0 = true }
+                process.terminate()
+            }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: timeout)
+        defer { timeout.cancel() }
+
         try input.fileHandleForWriting.write(JSONSerialization.data(withJSONObject: stdin))
         try input.fileHandleForWriting.close()
+
+        // Drain stderr before waiting (see runGeneratedMerger) and capture it
+        // for the failure message — previously unset, so the child wrote
+        // straight into the test runner's terminal and a bash-script failure
+        // here was opaque.
+        let errData = try stderr.fileHandleForReading.readToEnd() ?? Data()
         process.waitUntilExit()
-        #expect(process.terminationStatus == 0)
+
+        if timedOut.withLock({ $0 }) {
+            Issue.record("runGeneratedForwarder: forward-event.sh did not exit within 30s")
+        }
+        let stderrText = String(data: errData, encoding: .utf8) ?? ""
+        #expect(
+            process.terminationStatus == 0,
+            "forward-event.sh exited \(process.terminationStatus): \(stderrText)"
+        )
 
         let posted = try Data(contentsOf: capture)
         return try #require(JSONSerialization.jsonObject(with: posted) as? [String: Any])
