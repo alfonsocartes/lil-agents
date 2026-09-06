@@ -1,6 +1,6 @@
 import Foundation
 
-// Copied from AgentDeck ClaudeUsageFetcher.swift, 2026-08-22; keep decode in sync.
+// Copied from LilAgents ClaudeUsageFetcher.swift, 2026-08-22; keep decode in sync.
 // Credentials are injected (no `~/.claude` / Keychain reads).
 
 public struct ClaudeCredentials: Equatable, Sendable {

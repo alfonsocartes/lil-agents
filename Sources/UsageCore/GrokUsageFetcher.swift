@@ -1,6 +1,6 @@
 import Foundation
 
-// Copied from AgentDeck GrokUsageFetcher.swift, 2026-08-22; keep decode in sync.
+// Copied from LilAgents GrokUsageFetcher.swift, 2026-08-22; keep decode in sync.
 // Token is injected (no `~/.grok/auth.json` reads, no GrokCLIHome).
 
 public struct GrokUsageFetcher: UsageProviding, Sendable {
@@ -38,7 +38,7 @@ public struct GrokUsageFetcher: UsageProviding, Sendable {
         // SuperGrok unified-billing accounts (the TUI's weekly limit).
         request.setValue("cli", forHTTPHeaderField: "x-grok-client-mode")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("grok-cli/agentdeck-usage", forHTTPHeaderField: "User-Agent")
+        request.setValue("grok-cli/lilagents-usage", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await HTTPRetryAfter.perform(request, transport: transport)
         guard let http = response as? HTTPURLResponse else {

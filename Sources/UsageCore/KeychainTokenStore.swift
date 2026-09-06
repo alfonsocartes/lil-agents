@@ -3,7 +3,7 @@ import Security
 
 /// Shared iCloud Keychain items for the iPhone app and, optionally, lil
 /// agents on the Mac. Service/account/group strings must stay in lockstep
-/// with `IPhoneTokenHandoff` in AgentDeck.
+/// with `IPhoneTokenHandoff` in LilAgents.
 public struct KeychainTokenStore: TokenStoring, Sendable {
     public static let accessGroupSuffix = "group.com.wandity.lilagents"
 

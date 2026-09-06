@@ -1,7 +1,7 @@
 import Foundation
 
 /// Shared HTTP status / `Retry-After` mapping used by all three fetchers.
-/// Extracted from the duplicated AgentDeck helpers (Claude/Codex/Grok
+/// Extracted from the duplicated LilAgents helpers (Claude/Codex/Grok
 /// UsageFetcher.swift, 2026-08-22) — keep the mapping in lockstep:
 /// 2xx ok; 401/403 → `.tokenExpired`; 429 → `.rateLimited(retryAfter:)`
 /// (delta-seconds or RFC 1123 relative to `now`); other → `.badResponse`.

@@ -8,7 +8,7 @@
 
 ---
 
-**Stop alt-tabbing to check if your AI coding agent is done.** `lil agents` (aka **AgentDeck**) is a tiny, native macOS menu-bar app that shows the live status of every [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [OpenAI Codex CLI](https://developers.openai.com/codex/), and [Grok CLI](https://x.ai) session in an always-on-top overlay — working, idle, or waiting for you — and lets you jump straight to the terminal pane that needs attention.
+**Stop alt-tabbing to check if your AI coding agent is done.** `lil agents` is a tiny, native macOS menu-bar app that shows the live status of every [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [OpenAI Codex CLI](https://developers.openai.com/codex/), and [Grok CLI](https://x.ai) session in an always-on-top overlay — working, idle, or waiting for you — and lets you jump straight to the terminal pane that needs attention.
 
 **lil usage** is the iPhone companion in the same repo: a host app and Home Screen widgets for Claude, Codex, and Grok weekly usage. Sign in on the phone, or optionally copy CLI tokens from the Mac.
 
@@ -69,7 +69,7 @@ Click any session and it **jumps to the exact terminal pane that owns it** — a
 - **Notification Center alerts** — optionally get a banner (and sound) the instant a session goes **🔴 needs-approval** or **🟡 finished-its-turn**. Fires once per transition; tap the alert to jump straight to that pane. Fully configurable in **Settings** (which states, sound, on/off).
 - **Project-aware labels** — each session is labeled by its working-directory name, so you can tell your repos apart at a glance.
 - **Stay awake (lid closed)** — an optional toggle keeps your Mac awake with the lid shut, so long agent runs don't get suspended mid-task.
-- **Optional session tracking** — on by default. Settings → **Track sessions** installs the CLI hooks and shows the overlay and session list. Off uninstalls those hooks, hides the overlay, and leaves usage in the menu bar. Set `AGENTDECK_NO_INSTALL=1` to skip hook file mutation. Claude/Codex configs are merged in place; invalid JSON is left untouched, and the file is not rewritten if our entries are already correct. Grok's hook file is fully owned.
+- **Optional session tracking** — on by default. Settings → **Track sessions** installs the CLI hooks and shows the overlay and session list. Off uninstalls those hooks, hides the overlay, and leaves usage in the menu bar. Set `LILAGENTS_NO_INSTALL=1` to skip hook file mutation (the old `AGENTDECK_NO_INSTALL` is still honoured). Claude/Codex configs are merged in place; invalid JSON is left untouched, and the file is not rewritten if our entries are already correct. Grok's hook file is fully owned.
 - **Private by design** — everything is local. Events are sent over **loopback only** (`127.0.0.1:54173`), never your LAN, never the internet.
 - **Native & lightweight** — pure Swift 6, SwiftUI + AppKit, no Electron, no bundled runtime. Dock-less and unobtrusive (`LSUIElement`).
 
@@ -79,7 +79,7 @@ Click any session and it **jumps to the exact terminal pane that owns it** — a
 
 - **Claude Code** → `~/.claude/settings.json`
 - **Codex CLI** → `~/.codex/hooks.json`
-- **Grok CLI** → `~/.grok/hooks/agentdeck.json`
+- **Grok CLI** → `~/.grok/hooks/lilagents.json`
 
 On each lifecycle event — `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `SubagentStop`, and `SessionEnd` for Claude Code; `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `Stop`, and `SessionEnd` for Codex CLI; `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `StopFailure`, `StopCancelled`, `SubagentStop`, and `SessionEnd` for Grok CLI — a tiny generated forwarder script reads the hook's JSON, tags it with the terminal's TTY and owning CLI PID, and `POST`s it to the app's local listener. The app maps those events to a coarse status (`working` / `idle` / `waitingApproval`) and updates the overlay and menu-bar icon instantly. It fingerprints and watches the owning process so abrupt terminal closure still ends the right session without being confused by macOS reusing a PID.
 
@@ -95,7 +95,7 @@ Claude Code / Codex CLI / Grok CLI
 
 Existing hooks from other tools and plugins are preserved — the installer only ever adds or removes its own entries. Invalid JSON is left untouched. If our entries are already correct, the file is not rewritten.
 
-Grok's `~/.grok/hooks/agentdeck.json` is fully owned. Grok also scans `~/.claude/settings.json` by default (`[compat.claude] hooks = true`). Users with Claude-only hooks should set `[compat.claude] hooks = false` in `~/.grok/config.toml`. Grok tracking does not need the Claude copy.
+Grok's `~/.grok/hooks/lilagents.json` is fully owned (a pre-rename `agentdeck.json` is removed on the first launch after upgrading). Grok also scans `~/.claude/settings.json` by default (`[compat.claude] hooks = true`). Users with Claude-only hooks should set `[compat.claude] hooks = false` in `~/.grok/config.toml`. Grok tracking does not need the Claude copy.
 
 ### Requirements
 
@@ -173,7 +173,7 @@ Forkers must set their own `DEVELOPMENT_TEAM` (currently `S74M2P6469` in `iOS/pr
 - **No product telemetry.** There is no analytics, no account, no cloud of ours.
 - **Usage is opt-in.** Session tracking never leaves the machine. On the Mac, **Settings → AI usage** reads that CLI's local sign-in and asks Anthropic, OpenAI, or xAI for your current usage. Off by default. On the iPhone, usage uses tokens from **Sign in** on the phone or from the Mac's iCloud Keychain share.
 - **Tokens stay in Keychain.** iCloud Keychain share is an explicit Mac toggle (**Settings → Send tokens to iPhone**), off by default.
-- **Non-destructive config edits.** Claude/Codex configs are merged in place (invalid JSON is left untouched; already-correct entries are not rewritten). Turning **Track sessions** off, or using Settings → Uninstall, removes only what `lil agents` added (`~/.grok/hooks/agentdeck.json` is deleted whole because that file is ours).
+- **Non-destructive config edits.** Claude/Codex configs are merged in place (invalid JSON is left untouched; already-correct entries are not rewritten). Turning **Track sessions** off, or using Settings → Uninstall, removes only what `lil agents` added (`~/.grok/hooks/lilagents.json` is deleted whole because that file is ours).
 
 ## Install & build
 
@@ -200,7 +200,7 @@ Run the test suite with:
 swift test
 ```
 
-On launch, hooks install automatically while **Settings → Track sessions** is on (the default; idempotent; set `AGENTDECK_NO_INSTALL=1` to skip). Turning that switch off uninstalls the hooks. Start (or restart) a Claude Code, Codex, or Grok session — it should appear in the overlay immediately.
+On launch, hooks install automatically while **Settings → Track sessions** is on (the default; idempotent; set `LILAGENTS_NO_INSTALL=1` to skip — `AGENTDECK_NO_INSTALL` still works). Turning that switch off uninstalls the hooks. Start (or restart) a Claude Code, Codex, or Grok session — it should appear in the overlay immediately.
 
 > **First-run permissions:** macOS will show a one-time **Automation** prompt so the app can control your terminal when you jump to a pane. Local source builds are ad-hoc code-signed (release downloads are Developer ID signed and notarized), which is enough for this grant to persist across launches.
 
@@ -218,7 +218,7 @@ Menu bar → **Settings…** (**⌘,**) → **Uninstall lil agents…**
 
 This removes everything `lil agents` added to your system:
 
-- Its hook entries from `~/.claude/settings.json` and `~/.codex/hooks.json` (existing entries from other tools are left untouched), and `~/.grok/hooks/agentdeck.json`
+- Its hook entries from `~/.claude/settings.json` and `~/.codex/hooks.json` (existing entries from other tools are left untouched), and `~/.grok/hooks/lilagents.json`
 - The generated forwarder scripts
 - The launch-at-login item, if it was enabled
 - The **stay awake (lid closed)** `sudoers` rule, if it was ever enabled

@@ -6,10 +6,27 @@
     <string>lil agents</string>
     <key>CFBundleDisplayName</key>
     <string>lil agents</string>
+    <!-- Renamed from com.agentdeck.app (issue #6). Deliberately shipped without
+         SUDefaultsDomain or a `codesign --identifier` pin, so this update resets
+         everything macOS keys off the bundle id: the Automation (iTerm2) TCC
+         grant, notification authorization, all UserDefaults, and Sparkle's own
+         prefs. The old login-item registration cannot be unregistered by this
+         bundle and may linger in Login Items. Cannot reuse the iOS id
+         com.wandity.lilagents — one bundle id, one app.
+
+         Two consequences of that UserDefaults reset worth calling out:
+         `sessionsEnabled` (AppSettings) defaults to true when its key is gone,
+         so session tracking silently re-enables itself and rewrites the
+         third-party CLI hook configs (~/.claude/settings.json,
+         ~/.codex/hooks.json) even if the user had turned it off. And
+         launch-at-login stops working — SMAppService's registration is keyed
+         to the OLD bundle id, so it doesn't carry over — while the one-shot
+         "start at login?" prompt fires again anyway, since `loginItem.promptShown`
+         is gone along with everything else in the domain. -->
     <key>CFBundleIdentifier</key>
-    <string>com.agentdeck.app</string>
+    <string>com.wandity.lilagents.mac</string>
     <key>CFBundleExecutable</key>
-    <string>AgentDeck</string>
+    <string>LilAgents</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon.icns</string>
     <key>CFBundlePackageType</key>
@@ -27,9 +44,9 @@
     <true/>
     <!-- Shown on the one-time Automation prompt when jumping to an iTerm2 pane. -->
     <key>NSAppleEventsUsageDescription</key>
-    <string>AgentDeck brings the matching iTerm2 tab to the front when you click a session.</string>
+    <string>lil agents brings the matching iTerm2 tab to the front when you click a session.</string>
     <key>NSHumanReadableCopyright</key>
-    <string>AgentDeck</string>
+    <string>lil agents</string>
     <!-- Sparkle auto-update configuration. -->
     <key>SUFeedURL</key>
     <string>https://raw.githubusercontent.com/alfonsocartes/lil-agents/main/appcast.xml</string>

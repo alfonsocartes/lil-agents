@@ -1,0 +1,949 @@
+import Foundation
+import MachO
+import Synchronization
+
+/// Installs and removes lil agents' lifecycle hooks in Claude Code, Codex CLI,
+/// and Grok CLI.
+///
+/// Each CLI is configured to invoke a small generated forwarder script on each
+/// lifecycle event. The script reads the hook's stdin JSON, merges in `tool`,
+/// `event`, the pane's controlling `tty`, and the owning CLI PID, then POSTs
+/// the result — bearing the per-install
+/// `X-LilAgents-Token` header (see `LilAgents.loadOrCreateToken()`) — to our
+/// local listener (`127.0.0.1:<port>/event`) matching the `HookEvent` wire
+/// contract in Model.swift.
+///
+/// Claude and Codex configs are merged in place. Invalid JSON is left
+/// untouched (`Error.unreadableConfig`). If our entries are already correct
+/// (quoted command + timeout 10), the file is not rewritten. Unknown
+/// per-event shapes are skipped rather than replaced. Grok's
+/// `~/.grok/hooks/lilagents.json` is fully owned and overwritten each launch.
+enum HookInstaller {
+    struct Status { var claude: Bool; var codex: Bool; var grok: Bool }
+
+    enum Error: Swift.Error, Equatable {
+        case unreadableConfig(URL)
+    }
+
+    // MARK: - Paths
+
+    /// Test seam: redirects the home directory that every hook-config path is
+    /// computed from. Default `nil` → the real `homeDirectoryForCurrentUser`,
+    /// so production behavior is byte-for-byte unchanged. Tests set this to a
+    /// temp dir so install/uninstall never read or mutate the developer's real
+    /// `~/.claude/settings.json`, `~/.codex/hooks.json`, or
+    /// `~/.grok/hooks/lilagents.json`. Mutex-backed so the
+    /// static is concurrency-safe under Swift 6 (tests that set it are also
+    /// `.serialized`, but the storage itself must not be a bare mutable global).
+    internal static var homeDirectoryOverride: URL? {
+        get { homeDirectoryOverrideStorage.withLock { $0 } }
+        set { homeDirectoryOverrideStorage.withLock { $0 = newValue } }
+    }
+    private static let homeDirectoryOverrideStorage = Mutex<URL?>(nil)
+
+    /// True when this code is running inside a test harness (XCTest or
+    /// swift-testing). Belt-and-braces on purpose, but each check is verified:
+    ///  - `NSClassFromString("XCTestCase")` / the `XCTest*` env vars catch
+    ///    XCTest-hosted runs (Xcode test action, xctest bundles).
+    ///  - The dyld image scan catches swift-testing under `swift test`, which
+    ///    (verified by experiment on this toolchain) runs suites inside
+    ///    `swiftpm-testing-helper` with NO test-related env vars and WITHOUT
+    ///    XCTest linked — the only reliable in-process signal there is the
+    ///    loaded `Testing.framework`/`lib_TestingInterop` image. A production
+    ///    app process never loads either, so this can't false-positive.
+    ///    (`SWIFT_TESTING`-style env vars were tried first and are NOT set.)
+    /// `internal` (not `private`) so a test can assert the detection actually
+    /// fires under the real harness — see HookInstallerTests.
+    internal static let isRunningUnderTestHarness: Bool = {
+        if NSClassFromString("XCTestCase") != nil { return true }
+        let env = ProcessInfo.processInfo.environment
+        if env["XCTestConfigurationFilePath"] != nil || env["XCTestSessionIdentifier"] != nil {
+            return true
+        }
+        for i in 0..<_dyld_image_count() {
+            guard let cName = _dyld_get_image_name(i) else { continue }
+            let name = String(cString: cName)
+            if name.contains("/Testing.framework/")
+                || name.contains("libTesting.dylib")
+                || name.contains("lib_TestingInterop") {
+                return true
+            }
+        }
+        return false
+    }()
+
+    private static var homeDirectory: URL {
+        if let override = homeDirectoryOverride { return override }
+        // Hard guard (from a real incident): a racy early test run reached this
+        // path with `homeDirectoryOverride == nil` and rewrote the developer's
+        // REAL ~/.claude/settings.json. The test suite is `.serialized` now,
+        // but if any future test — or test-ordering change — ever gets here
+        // without an override, crash loudly instead of touching the real home.
+        // Production (non-test) processes never trip this: the harness checks
+        // above are all false outside `swift test`/Xcode test runs.
+        if isRunningUnderTestHarness {
+            fatalError("""
+                HookInstaller: refusing to touch the real home directory from a test process. \
+                Set HookInstaller.homeDirectoryOverride to a temp directory before calling any \
+                HookInstaller API (see HookInstallerTests.withTempHome).
+                """)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    private static var claudeSettingsURL: URL {
+        homeDirectory.appendingPathComponent(".claude/settings.json")
+    }
+
+    private static var codexHooksURL: URL {
+        homeDirectory.appendingPathComponent(".codex/hooks.json")
+    }
+
+    private static var grokHome: URL {
+        GrokCLIHome.resolve(homeDirectory: homeDirectory)
+    }
+
+    private static var grokHooksURL: URL {
+        grokHome.appendingPathComponent("hooks/lilagents.json")
+    }
+
+    /// The same fully-owned file under the name it had before the rename.
+    /// Never written — deleted on install (right after the new one lands) and
+    /// on uninstall, so a pre-rename file can't sit there forever firing hooks
+    /// at a forwarder path that no longer exists.
+    // TODO(rename cleanup): exists solely to migrate the pre-rename install.
+    // Delete this property and its two `removeItem` call sites one release
+    // after this ships.
+    private static var legacyGrokHooksURL: URL {
+        grokHome.appendingPathComponent("hooks/agentdeck.json")
+    }
+
+    private static var forwarderScriptURL: URL {
+        LilAgents.supportDir.appendingPathComponent("forward-event.sh")
+    }
+
+    /// The forwarder as builds before the rename wrote it, under
+    /// `~/Library/Application Support/AgentDeck`. Never written — only
+    /// recognized, and that recognition is not optional: `command(for:event:)`
+    /// bakes this ABSOLUTE PATH into every user's `settings.json` /
+    /// `hooks.json`, and detection, self-healing and pruning all match on it
+    /// as a string. Stop recognizing it and every pre-rename entry becomes
+    /// invisible to us: never rewritten, never pruned, and left invoking a
+    /// script the migration has moved away — the same failure `prunedHooks`
+    /// documents from the last time our own entries went unrecognized.
+    // TODO(rename cleanup): exists solely to migrate the pre-rename install.
+    // Delete this property one release after this ships.
+    private static var legacyForwarderScriptURL: URL {
+        LilAgents.legacySupportDir.appendingPathComponent("forward-event.sh")
+    }
+
+    /// Every forwarder path we treat as ours, newest first. The legacy entry
+    /// can be dropped a release or two after the rename, once configs have had
+    /// time to be rewritten.
+    // TODO(rename cleanup): drop `legacyForwarderScriptURL` from this list
+    // (and delete it) one release after this ships.
+    private static var ownedForwarderPaths: [String] {
+        [forwarderScriptURL.path, legacyForwarderScriptURL.path]
+    }
+
+    /// True when `command` invokes one of our forwarders (current or
+    /// pre-rename). Substring, not equality: it also has to catch stale
+    /// variants of the command around the same path (unquoted, wrong argv).
+    // TODO(rename cleanup): the "pre-rename" half of this only matters until
+    // `ownedForwarderPaths` drops the legacy path — see there.
+    private static func isOurCommand(_ command: String?) -> Bool {
+        guard let command else { return false }
+        return ownedForwarderPaths.contains { command.contains($0) }
+    }
+
+    private static var mergerScriptURL: URL {
+        LilAgents.supportDir.appendingPathComponent("merge-event.py")
+    }
+
+    /// The merger and bearer token as they lived under the pre-rename support
+    /// directory. Never written — only removed, by `uninstall()`, so a
+    /// machine whose migration failed doesn't strand the 0600 token file
+    /// (or the merger it's paired with) after "Track sessions" is turned off.
+    // TODO(rename cleanup): exist solely to migrate the pre-rename install.
+    // Delete both, and their `removeItem` calls in `uninstall()`, one release
+    // after this ships.
+    private static var legacyMergerScriptURL: URL {
+        LilAgents.legacySupportDir.appendingPathComponent("merge-event.py")
+    }
+
+    private static var legacyTokenURL: URL {
+        LilAgents.legacySupportDir.appendingPathComponent("token")
+    }
+
+    /// Events wired into Claude Code's `~/.claude/settings.json`.
+    private static let claudeEvents = [
+        "SessionStart", "UserPromptSubmit", "PreToolUse", "Notification",
+        "Stop", "SubagentStop", "SessionEnd",
+    ]
+
+    /// Events wired into Codex CLI's `~/.codex/hooks.json`.
+    ///
+    /// Verified against the current Codex hooks schema (developers.openai.com/codex/config-reference,
+    /// learn.chatgpt.com/docs/hooks): hooks live under a top-level `"hooks"` object keyed by event
+    /// name, each mapping to an array of matcher-groups `{ "matcher": ..., "hooks": [ { "type":
+    /// "command", "command": ... } ] }` — structurally the same shape Claude Code uses. Codex hooks
+    /// receive one JSON object on stdin (fields include session_id, cwd, hook_event_name, model,
+    /// permission_mode), so no `notify`-style argv fallback is needed. `hooks.json` is a fully
+    /// documented, first-class config surface (alongside inline `config.toml [hooks]` tables), so we
+    /// write there rather than touching TOML.
+    ///
+    /// `SessionEnd` matters more than it looks: without it a Codex session has
+    /// NO end signal at all, so every one-shot `codex exec` left a row that
+    /// only the 1-hour stale sweep could ever retire. It is a real event in
+    /// Codex's hook enum (verified against the shipped binary's hook-event
+    /// wire names, alongside SessionStart/UserPromptSubmit/SubagentStart/
+    /// SubagentStop/Stop) — it had simply never been wired up here.
+    private static let codexEvents = [
+        "SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "Stop",
+        "SessionEnd",
+    ]
+
+    /// Events wired into Grok CLI's `~/.grok/hooks/lilagents.json`. Same
+    /// matcher-group JSON shape as Claude Code. Grok also scans
+    /// `~/.claude/settings.json`, so a Grok session dual-fires our Claude
+    /// hooks — the forwarder retags those via `GROK_HOOK_EVENT`.
+    private static let grokEvents = [
+        "SessionStart", "UserPromptSubmit", "PreToolUse", "Notification",
+        "Stop", "StopFailure", "StopCancelled", "SessionEnd", "SubagentStop",
+    ]
+
+    private static func command(for tool: String, event: String) -> String {
+        // The forwarder lives under "Application Support" — a path WITH A SPACE.
+        // The command is run through a shell, so the path MUST be quoted or the
+        // shell splits it (…/Library/Application → "command not found").
+        "'\(forwarderScriptURL.path)' \(tool) \(event)"
+    }
+
+    // MARK: - status()
+
+    static func status() -> Status {
+        // JSONSerialization escapes `/` as `\/` unless `.withoutEscapingSlashes`
+        // is set, so a naive contains(path) misses our own writes.
+        let paths: [String] = ownedForwarderPaths.flatMap { path in
+            [path, path.replacingOccurrences(of: "/", with: "\\/")]
+        }
+        func mentionsForwarder(_ text: String) -> Bool {
+            paths.contains { text.contains($0) }
+        }
+        let claudeText = (try? String(contentsOf: claudeSettingsURL, encoding: .utf8)) ?? ""
+        let codexText = (try? String(contentsOf: codexHooksURL, encoding: .utf8)) ?? ""
+        let grokText = (try? String(contentsOf: grokHooksURL, encoding: .utf8)) ?? ""
+        // A pre-rename install still has its entries in the old file only.
+        // TODO(rename cleanup): exists solely to migrate the pre-rename
+        // install. Delete one release after this ships.
+        let legacyGrokText = (try? String(contentsOf: legacyGrokHooksURL, encoding: .utf8)) ?? ""
+        return Status(
+            claude: mentionsForwarder(claudeText),
+            codex: mentionsForwarder(codexText),
+            grok: mentionsForwarder(grokText) || mentionsForwarder(legacyGrokText)
+        )
+    }
+
+    // MARK: - install(port:)
+
+    static func install(port: UInt16) throws {
+        try FileManager.default.createDirectory(at: LilAgents.supportDir, withIntermediateDirectories: true)
+        try writeForwarderScript(port: port)
+        try writeMergerScript()
+        // Each CLI is independent: a corrupt Claude settings.json must not
+        // skip Codex/Grok (and the reverse).
+        var firstError: Swift.Error?
+        for step in [installClaudeHooks, installCodexHooks, installGrokHooks] {
+            do { try step() }
+            catch {
+                if firstError == nil { firstError = error }
+            }
+        }
+        if let firstError { throw firstError }
+    }
+
+    // MARK: - uninstall()
+
+    static func uninstall() throws {
+        try uninstallClaudeHooks()
+        try uninstallCodexHooks()
+        try uninstallGrokHooks()
+
+        let fm = FileManager.default
+        try? fm.removeItem(at: forwarderScriptURL)
+        try? fm.removeItem(at: mergerScriptURL)
+        // Best-effort: if migration never ran (or failed partway), these are
+        // the pre-rename equivalents — including the 0600 bearer token — and
+        // would otherwise strand under the old support directory forever once
+        // config entries are pruned above.
+        try? fm.removeItem(at: legacyForwarderScriptURL)
+        try? fm.removeItem(at: legacyMergerScriptURL)
+        try? fm.removeItem(at: legacyTokenURL)
+    }
+
+    // MARK: - Generated scripts
+
+    private static func writeForwarderScript(port: UInt16) throws {
+        let supportPath = LilAgents.supportDir.path
+        let tokenPath = LilAgents.tokenURL.path
+        let script = """
+        #!/bin/bash
+        # lil agents event forwarder. Generated by HookInstaller — do not edit by hand.
+        # Invoked by CLI hooks as: forward-event.sh <tool> <event>
+        # Reads the hook's stdin JSON, merges in tool/event/tty, POSTs it to the
+        # local lil agents listener. Always exits 0 and never blocks the CLI.
+        TOOL="$1"
+        EVENT="$2"
+        PORT="\(port)"
+        SUPPORT_DIR="\(supportPath)"
+
+        # Drain the hook's stdin BEFORE any work at all — including the tty
+        # parent-chain walk immediately below, not just the terminal-
+        # detection block that follows it. That walk alone can spawn ~2 `ps`
+        # calls per ancestor (up to ~64 total for a deep pid tree), and the
+        # detection block below it can spawn dozens more. A hook payload
+        # larger than the pipe buffer (64KB) would block the calling CLI's
+        # write() until we get around to reading it, so reading stdin FIRST
+        # — before either piece of work — is what actually keeps this
+        # script's "never blocks the CLI" contract intact. Nothing below
+        # this point re-reads stdin.
+        stdin_json="$(cat)"
+
+        # Grok dual-fires Claude-compat hooks. Retag via GROK_HOOK_EVENT, not
+        # GROK_SESSION_ID (a nested `claude` spawned from Grok might inherit it).
+        if [ -n "${GROK_HOOK_EVENT:-}" ]; then
+          TOOL=grok
+        fi
+
+        # Identify the CLI process that owns this session, then take THAT
+        # process's controlling terminal as the session's pane. Start at our
+        # parent rather than $$ so the short-lived forwarder can never be
+        # mistaken for the process we should monitor.
+        #
+        # This used to walk up to the first ancestor that merely HAD a tty,
+        # which is wrong the moment one agent spawns another. A headless
+        # `codex exec` launched from a Claude Code session has no controlling
+        # terminal of its own, so the walk sailed straight past it and
+        # reported the PARENT Claude process's pid and tty. Every such run
+        # then looked like it lived in the parent's pane and was owned by the
+        # parent's (still very much alive) process — so the overlay grew a row
+        # per run that nothing could ever retire, and process-exit tracking
+        # watched a process that wasn't going to exit.
+        #
+        # So: find the nearest ancestor whose command name matches this tool,
+        # and read the tty from that process alone. An owner with no
+        # controlling terminal is reported as headless rather than borrowing
+        # an ancestor's pane.
+        case "$TOOL" in
+          claude) owner_match="claude" ;;
+          codex)  owner_match="codex" ;;
+          grok)   owner_match="grok" ;;
+          *)      owner_match="" ;;
+        esac
+
+        tty=""
+        agent_pid=""
+        headless=""
+
+        # ONE walk up the ancestors, preferring a command name that IS the tool
+        # and falling back to the nearest language runtime.
+        #
+        # Exact match, not substring: sibling helpers like `codex-code-mode-host`
+        # run without a controlling terminal, and matching one of those would
+        # mark a real session headless and hide it from the overlay entirely.
+        # `ps -o comm=` may print a full path, hence the basename.
+        #
+        # The runtime fallback exists because a CLI installed as a
+        # `#!/usr/bin/env node` shim reports the RUNTIME as its command name,
+        # never the script's — the npm shape of Claude Code would otherwise get
+        # none of this. Hooks are spawned by the CLI itself, so the nearest
+        # runtime ancestor is that CLI.
+        #
+        # The NEAREST ancestor matching either rule wins, and the walk stops
+        # there. Preferring an exact name match at ANY depth over a closer
+        # runtime was both slower and wrong:
+        #
+        #  - Slower, because an interpreter-backed install can never produce an
+        #    exact match, so every hook event walked the entire ancestry to pid
+        #    1 — measured at 17 `ps` forks against 8 for a native install, on a
+        #    path the CLI blocks on before each tool call.
+        #  - Wrong, because a `claude` or `codex` ancestor ABOVE the real owner
+        #    would win. A native `claude` whose Bash tool launches an
+        #    npm-installed `claude` would attribute the nested run's pid and
+        #    tty to the outer session — the exact mis-attribution this whole
+        #    routine exists to prevent.
+        #
+        # Nearest-wins is also just the right model: hooks are spawned by the
+        # CLI that owns the session, so the first plausible CLI above us IS it.
+        if [ -n "$owner_match" ]; then
+          pid=$PPID
+          depth=0
+          while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ "$depth" -lt 32 ]; do
+            comm="$(ps -o comm= -p "$pid" 2>/dev/null)"
+            base="${comm##*/}"
+            if [ "$base" = "$owner_match" ]; then
+              agent_pid="$pid"
+              break
+            fi
+            case "$base" in
+              node|bun|deno) agent_pid="$pid"; break ;;
+            esac
+            pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+            depth=$((depth + 1))
+          done
+        fi
+
+        if [ -n "$agent_pid" ]; then
+          # "??" means the owner genuinely has no controlling terminal. EMPTY
+          # means the probe itself told us nothing — `ps` failed, or the owner
+          # exited in the gap since the walk above. Those are not the same
+          # thing, and treating the second as headless would drop the event in
+          # SessionLifecycleCoordinator.receive — including a SessionEnd, which
+          # for Codex is the ONLY end signal there is. So claim neither a tty
+          # nor headlessness when we simply do not know.
+          t="$(ps -o tty= -p "$agent_pid" 2>/dev/null | tr -d ' ')"
+          if [ -n "$t" ] && [ "$t" != "??" ]; then
+            tty="/dev/$t"
+          elif [ "$t" = "??" ]; then
+            headless="1"
+          fi
+        else
+          # Owner unidentified. Report a tty for the jump feature if some
+          # ancestor has one, but deliberately DO NOT set agent_pid: claiming
+          # ownership we cannot substantiate is worse than claiming none. The
+          # first ancestor with a terminal is frequently the WRONG process —
+          # for a nested agent run it is the parent agent — and asserting that
+          # pid would hand the parent's row to this session, evict it, and
+          # (because a process-backed row is exempt from stale pruning) leave
+          # the replacement in place for as long as the parent lives. Without a
+          # pid this degrades to exactly the pre-ownership behavior.
+          pid=$PPID
+          depth=0
+          while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ "$depth" -lt 32 ]; do
+            t=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
+            if [ -n "$t" ] && [ "$t" != "??" ]; then
+              tty="/dev/$t"
+              break
+            fi
+            pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+            depth=$((depth + 1))
+          done
+        fi
+
+        # Detect which terminal (or multiplexer) hosts this pane, for the
+        # "jump to pane" feature (see TerminalJumpers.swift). Best-effort —
+        # an unrecognized environment just leaves everything below empty and
+        # the app falls back to a no-op jump. Order: tmux (it hides the real
+        # terminal's env from most detection) first, then $TERM_PROGRAM, then
+        # a couple of last-resort env checks.
+        terminal=""
+        wezterm_pane=""
+        wezterm_socket=""
+        wezterm_exe=""
+        tmux_pane=""
+        tmux_socket=""
+        tmux_host=""
+        host_tty=""
+
+        if [ -n "${TMUX:-}" ]; then
+          terminal="tmux"
+          tmux_socket="${TMUX%%,*}"
+          tmux_pane="${TMUX_PANE:-}"
+
+          # Best-effort: identify the GUI app hosting the tmux client attached
+          # to this session, so a jump can also raise ITS window. Takes the
+          # FIRST attached client — good enough for the common single-client
+          # case.
+          #
+          # Scope the lookup to THIS pane's session. `tmux list-clients`
+          # WITHOUT `-t` lists clients attached to ANY session on the whole
+          # tmux server, not just this one. With two terminal windows on one
+          # server (e.g. window A on session "work", window B on session
+          # "api"), a hook from "api" could pick up window A's client/tty
+          # here — and TmuxJumper later runs `switch-client -c <tty> -t
+          # "api"`, which would yank window A off the session the user is
+          # actively using and hijack it, instead of raising window B where
+          # this agent actually is. We scope by session ID rather than
+          # session NAME: tmux's `-t` target resolution can prefix-match an
+          # unqualified session name (e.g. a lookup for "api" can resolve to
+          # "api-staging" on a server that has both), which would silently
+          # pick clients from the wrong session and reintroduce the exact
+          # hijack this scoping is meant to prevent. Session IDs (e.g. "$3")
+          # are unique and never prefix-match, so `-t "$tmux_session_id"` is
+          # unambiguous by construction. If resolving the ID fails for any
+          # reason, fall back to the old unscoped lookup rather than losing
+          # detection entirely.
+          tmux_session_id=""
+          if [ -n "$tmux_pane" ]; then
+            tmux_session_id="$(tmux display-message -p -t "$tmux_pane" '#{session_id}' 2>/dev/null)"
+          fi
+          if [ -n "$tmux_session_id" ]; then
+            client_line="$(tmux list-clients -t "$tmux_session_id" -F '#{client_pid} #{client_tty} #{client_termname}' 2>/dev/null | head -1)"
+          else
+            client_line="$(tmux list-clients -F '#{client_pid} #{client_tty} #{client_termname}' 2>/dev/null | head -1)"
+          fi
+          if [ -n "$client_line" ]; then
+            client_pid="$(printf '%s' "$client_line" | awk '{print $1}')"
+            client_tty_raw="$(printf '%s' "$client_line" | awk '{print $2}')"
+            client_termname="$(printf '%s' "$client_line" | awk '{print $3}')"
+
+            # Walk the client pid up the process tree looking for a known GUI app.
+            walk_pid="$client_pid"
+            depth=0
+            while [ -n "$walk_pid" ] && [ "$walk_pid" -gt 1 ] 2>/dev/null && [ "$depth" -lt 32 ]; do
+              comm="$(ps -o comm= -p "$walk_pid" 2>/dev/null | tr -d ' ')"
+              case "$comm" in
+                *iTerm2*|*iTerm*) tmux_host="iterm2"; break ;;
+                *Terminal*)       tmux_host="apple_terminal"; break ;;
+                *WezTerm*|*wezterm*) tmux_host="wezterm"; break ;;
+                *Ghostty*|*ghostty*) tmux_host="ghostty"; break ;;
+              esac
+              walk_pid="$(ps -o ppid= -p "$walk_pid" 2>/dev/null | tr -d ' ')"
+              depth=$((depth + 1))
+            done
+
+            # Fallback: infer from the client's reported TERM when the
+            # process-tree walk didn't match (e.g. sandboxed/renamed process).
+            if [ -z "$tmux_host" ]; then
+              case "$client_termname" in
+                xterm-ghostty) tmux_host="ghostty" ;;
+                wezterm)       tmux_host="wezterm" ;;
+              esac
+            fi
+
+            # Only iTerm2/Terminal support a precise host-window raise (via
+            # their own tty-matching osascript) — capture the client's tty
+            # for that. WezTerm/Ghostty hosts are activated by app name only.
+            if [ "$tmux_host" = "iterm2" ] || [ "$tmux_host" = "apple_terminal" ]; then
+              if [ -n "$client_tty_raw" ] && [ "$client_tty_raw" != "??" ]; then
+                case "$client_tty_raw" in
+                  /dev/*) host_tty="$client_tty_raw" ;;
+                  *)      host_tty="/dev/$client_tty_raw" ;;
+                esac
+              fi
+            fi
+          fi
+        elif [ "${TERM_PROGRAM:-}" = "iTerm.app" ]; then
+          terminal="iterm2"
+        elif [ "${TERM_PROGRAM:-}" = "Apple_Terminal" ]; then
+          terminal="apple_terminal"
+        elif [ "${TERM_PROGRAM:-}" = "WezTerm" ]; then
+          terminal="wezterm"
+          wezterm_pane="${WEZTERM_PANE:-}"
+          wezterm_socket="${WEZTERM_UNIX_SOCKET:-}"
+          wezterm_exe="${WEZTERM_EXECUTABLE:-}"
+        elif [ "${TERM_PROGRAM:-}" = "ghostty" ]; then
+          terminal="ghostty"
+        elif [ -n "${GHOSTTY_RESOURCES_DIR:-}" ]; then
+          terminal="ghostty"
+        elif [ -n "${WEZTERM_PANE:-}" ]; then
+          terminal="wezterm"
+          wezterm_pane="${WEZTERM_PANE:-}"
+          wezterm_socket="${WEZTERM_UNIX_SOCKET:-}"
+          wezterm_exe="${WEZTERM_EXECUTABLE:-}"
+        fi
+
+        json="$(printf '%s' "$stdin_json" | \\
+          LILAGENTS_AGENT_PID="$agent_pid" \\
+          LILAGENTS_HEADLESS="$headless" \\
+          LILAGENTS_TERMINAL="$terminal" \\
+          LILAGENTS_WEZTERM_PANE="$wezterm_pane" \\
+          LILAGENTS_WEZTERM_SOCKET="$wezterm_socket" \\
+          LILAGENTS_WEZTERM_EXE="$wezterm_exe" \\
+          LILAGENTS_TMUX_PANE="$tmux_pane" \\
+          LILAGENTS_TMUX_SOCKET="$tmux_socket" \\
+          LILAGENTS_TMUX_HOST="$tmux_host" \\
+          LILAGENTS_HOST_TTY="$host_tty" \\
+          /usr/bin/python3 "$SUPPORT_DIR/merge-event.py" "$TOOL" "$EVENT" "$tty" 2>/dev/null)"
+
+        if [ -n "$json" ]; then
+          # Read the per-install bearer token the listener requires on every
+          # request (see EventListener.swift). Read fresh each time rather than
+          # cached, so a token rotation takes effect on the next event.
+          token=$(cat '\(tokenPath)' 2>/dev/null)
+
+          # -f: treat a non-2xx response (wrong/missing token, or some other
+          #     process entirely squatting on the port) as a curl failure.
+          # -s -S: quiet on success, but -S still surfaces real errors to stderr
+          #     (which we discard below) rather than the default silent -s.
+          # -m 2: never let a wedged/absent listener block the CLI hook.
+          # `|| exit 0`: any failure here — squatter, stale token, connection
+          #     refused — is intentionally a silent no-op rather than surfaced
+          #     to the CLI. (Residual: a squatter that wins the port before
+          #     lil agents ever launches could observe one token value on the
+          #     first POST; this is a same-host, low-severity residual — see
+          #     the bind-failure log in EventListener.swift for the detection
+          #     side of this mitigation.)
+          # Body on stdin (`--data-binary @-`), not `-d`, so a large JSON
+          # payload cannot blow ARG_MAX or leak onto the process list.
+          printf '%s' "$json" | curl -fsS -m 2 -X POST \\
+            -H 'Content-Type: application/json' \\
+            -H "X-LilAgents-Token: $token" \\
+            --data-binary @- \\
+            "http://127.0.0.1:$PORT/event" >/dev/null 2>&1 || exit 0
+        fi
+
+        exit 0
+        """
+        try script.write(to: forwarderScriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: forwarderScriptURL.path)
+    }
+
+    private static func writeMergerScript() throws {
+        let script = """
+        #!/usr/bin/env python3
+        # lil agents event merger. Generated by HookInstaller — do not edit by hand.
+        # Reads the hook's stdin JSON, overlays tool/event/tty plus the
+        # terminal-jump fields (passed via LILAGENTS_* env vars rather than argv,
+        # so this stays stable as fields are added), prints merged JSON.
+        import json
+        import os
+        import sys
+
+
+        # Maps each optional terminal-jump JSON key to the env var the forwarder
+        # sets it from (see HookInstaller.swift's writeForwarderScript). Only
+        # non-empty values are added, so old/undetected fields simply don't
+        # appear — HookEvent.swift decodes their absence as nil.
+        ENV_FIELDS = {
+            "terminal": "LILAGENTS_TERMINAL",
+            "wezterm_pane": "LILAGENTS_WEZTERM_PANE",
+            "wezterm_socket": "LILAGENTS_WEZTERM_SOCKET",
+            "wezterm_exe": "LILAGENTS_WEZTERM_EXE",
+            "tmux_pane": "LILAGENTS_TMUX_PANE",
+            "tmux_socket": "LILAGENTS_TMUX_SOCKET",
+            "tmux_host": "LILAGENTS_TMUX_HOST",
+            "host_tty": "LILAGENTS_HOST_TTY",
+        }
+
+
+        def env_value(name):
+            return os.environ.get(name, "")
+
+
+        def main() -> None:
+            tool = sys.argv[1] if len(sys.argv) > 1 else ""
+            event = sys.argv[2] if len(sys.argv) > 2 else ""
+            tty = sys.argv[3] if len(sys.argv) > 3 else ""
+
+            raw = sys.stdin.read()
+            data = {}
+            try:
+                parsed = json.loads(raw) if raw.strip() else {}
+                if isinstance(parsed, dict):
+                    data = parsed
+            except Exception:
+                data = {}
+
+            data["tool"] = tool
+            data["event"] = event
+            if tty:
+                data["tty"] = tty
+
+            # Grok's stdin JSON is camelCase. Copy into the snake_case fields
+            # HookEvent decodes, without overwriting a value already present.
+            if "session_id" not in data and "sessionId" in data:
+                data["session_id"] = data["sessionId"]
+            if "notification_type" not in data and "notificationType" in data:
+                data["notification_type"] = data["notificationType"]
+
+            for key, env_name in ENV_FIELDS.items():
+                value = env_value(env_name)
+                if value:
+                    data[key] = value
+
+            # Never trust a PID or a headless claim supplied by the CLI hook
+            # payload itself. Only the locally generated forwarder may assert
+            # process ownership or how the session was launched.
+            data.pop("agent_pid", None)
+            agent_pid = env_value("LILAGENTS_AGENT_PID")
+            if agent_pid.isdecimal() and int(agent_pid) > 1:
+                data["agent_pid"] = int(agent_pid)
+
+            data.pop("headless", None)
+            if env_value("LILAGENTS_HEADLESS"):
+                data["headless"] = True
+
+            # HookEvent only decodes these keys. Drop everything else
+            # (tool_input, prompt, camelCase leftovers, ...) so a large hook
+            # payload cannot blow the listener's 64KB cap.
+            keep = {
+                "tool", "event", "session_id", "cwd", "tty",
+                "notification_type", "reason", "agent_pid", "headless",
+                "terminal", "wezterm_pane", "wezterm_socket", "wezterm_exe",
+                "tmux_pane", "tmux_socket", "tmux_host", "host_tty",
+            }
+            data = {k: v for k, v in data.items() if k in keep}
+
+            print(json.dumps(data))
+
+
+        if __name__ == "__main__":
+            main()
+        """
+        try script.write(to: mergerScriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: mergerScriptURL.path)
+    }
+
+    // MARK: - Claude Code (~/.claude/settings.json)
+
+    private static func installClaudeHooks() throws {
+        let fm = FileManager.default
+        var root: [String: Any] = [:]
+        if let existing = try readJSONObject(at: claudeSettingsURL) {
+            root = existing
+        }
+
+        if root["hooks"] != nil && root["hooks"] as? [String: Any] == nil {
+            throw Error.unreadableConfig(claudeSettingsURL)
+        }
+        var hooks = root["hooks"] as? [String: Any] ?? [:]
+        if hasCorrectLilAgentsEntries(hooks, events: claudeEvents, tool: "claude", matcher: "") {
+            return
+        }
+        for event in claudeEvents {
+            if hooks[event] != nil && hooks[event] as? [[String: Any]] == nil { continue }
+            hooks[event] = upsertGroups(hooks[event], command: command(for: "claude", event: event))
+        }
+        root["hooks"] = hooks
+
+        try fm.createDirectory(at: claudeSettingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: claudeSettingsURL, options: .atomic)
+    }
+
+    private static func uninstallClaudeHooks() throws {
+        guard let data = try? Data(contentsOf: claudeSettingsURL),
+              var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hooks = root["hooks"] as? [String: Any]
+        else { return }
+
+        let remaining = prunedHooks(hooks)
+        root["hooks"] = remaining.isEmpty ? nil : remaining
+
+        let out = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try out.write(to: claudeSettingsURL, options: .atomic)
+    }
+
+    // MARK: - Codex CLI (~/.codex/hooks.json)
+
+    private static func installCodexHooks() throws {
+        let fm = FileManager.default
+        var root: [String: Any] = [:]
+        if let existing = try readJSONObject(at: codexHooksURL) {
+            root = existing
+        }
+
+        if root["hooks"] != nil && root["hooks"] as? [String: Any] == nil {
+            throw Error.unreadableConfig(codexHooksURL)
+        }
+        var hooks = root["hooks"] as? [String: Any] ?? [:]
+        if hasCorrectLilAgentsEntries(hooks, events: codexEvents, tool: "codex", matcher: ".*") {
+            return
+        }
+        for event in codexEvents {
+            if hooks[event] != nil && hooks[event] as? [[String: Any]] == nil { continue }
+            hooks[event] = upsertGroups(
+                hooks[event], command: command(for: "codex", event: event), matcher: ".*")
+        }
+        root["hooks"] = hooks
+        if root["description"] == nil {
+            root["description"] = "lil agents lifecycle hooks — forwards session events to the lil agents overlay."
+        }
+
+        try fm.createDirectory(at: codexHooksURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: codexHooksURL, options: .atomic)
+    }
+
+    private static func uninstallCodexHooks() throws {
+        guard let data = try? Data(contentsOf: codexHooksURL),
+              var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hooks = root["hooks"] as? [String: Any]
+        else { return }
+
+        let remaining = prunedHooks(hooks)
+        root["hooks"] = remaining.isEmpty ? nil : remaining
+
+        let out = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try out.write(to: codexHooksURL, options: .atomic)
+    }
+
+    // MARK: - Grok CLI (~/.grok/hooks/lilagents.json)
+
+    private static func installGrokHooks() throws {
+        var hooks: [String: Any] = [:]
+        for event in grokEvents {
+            let entry: [String: Any] = [
+                "type": "command",
+                "command": command(for: "grok", event: event),
+                "timeout": 10,
+            ]
+            hooks[event] = [["matcher": "", "hooks": [entry]]]
+        }
+        let root: [String: Any] = ["hooks": hooks]
+
+        try FileManager.default.createDirectory(
+            at: grokHooksURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: grokHooksURL, options: .atomic)
+
+        // Only once the replacement is safely on disk: this file is entirely
+        // ours, so leaving the pre-rename copy would double-fire every event
+        // through a forwarder path that no longer exists.
+        // TODO(rename cleanup): this `removeItem` call and `legacyGrokHooksURL`
+        // exist solely to migrate the pre-rename install. Delete both one
+        // release after this ships.
+        try? FileManager.default.removeItem(at: legacyGrokHooksURL)
+    }
+
+    /// Deletes only `lilagents.json` and its pre-rename name `agentdeck.json`.
+    /// Sibling files in `~/.grok/hooks/` stay.
+    private static func uninstallGrokHooks() throws {
+        try? FileManager.default.removeItem(at: grokHooksURL)
+        // TODO(rename cleanup): exists solely to migrate the pre-rename
+        // install. Delete one release after this ships.
+        try? FileManager.default.removeItem(at: legacyGrokHooksURL)
+    }
+
+    // MARK: - Shared matcher-group merge/prune helpers
+    //
+    // Both Claude Code and Codex CLI use the same hook shape for a given event:
+    // an array of matcher-groups, each `{ "matcher": <string>, "hooks": [ { "type":
+    // "command", "command": <string> } ] }`. These helpers add/remove our own
+    // command idempotently while leaving any other tool's entries untouched.
+
+    /// Returns `existing` (an `Any?` expected to be `[[String: Any]]`) with a group
+    /// added for `command`, unless a group already contains that exact command.
+    // `internal` (not `private`) so unit tests can exercise the pure merge logic directly.
+    internal static func mergedGroups(_ existing: Any?, adding command: String, matcher: String = "") -> [[String: Any]] {
+        var groups = existing as? [[String: Any]] ?? []
+        let alreadyPresent = groups.contains { group in
+            let entries = group["hooks"] as? [[String: Any]] ?? []
+            return entries.contains { ($0["command"] as? String) == command }
+        }
+        if !alreadyPresent {
+            let entry: [String: Any] = ["type": "command", "command": command]
+            groups.append(["matcher": matcher, "hooks": [entry]])
+        }
+        return groups
+    }
+
+    /// Self-healing add: removes ANY prior entry that references one of our
+    /// forwarder script paths — current or pre-rename — catching stale/broken
+    /// variants (e.g. the old unquoted command that the shell mis-split), then
+    /// appends the one correct `command`. This is also how a pre-rename entry
+    /// gets rewritten to the new path. Foreign hooks (whose command contains
+    /// neither of our script paths) are left untouched.
+    // `internal` (not `private`) so unit tests can exercise the pure merge logic directly.
+    internal static func upsertGroups(_ existing: Any?, command: String, matcher: String = "") -> [[String: Any]] {
+        var groups = (existing as? [[String: Any]] ?? []).compactMap { group -> [String: Any]? in
+            guard var entries = group["hooks"] as? [[String: Any]] else { return group }
+            entries.removeAll { isOurCommand($0["command"] as? String) }
+            if entries.isEmpty { return nil }   // was only ours → drop the empty group
+            var g = group
+            g["hooks"] = entries
+            return g
+        }
+        groups.append(["matcher": matcher, "hooks": [["type": "command", "command": command, "timeout": 10]]])
+        return groups
+    }
+
+    /// Missing file → nil (caller creates). Existing file that is not a JSON
+    /// object → throw, and the caller must not write.
+    private static func readJSONObject(at url: URL) throws -> [String: Any]? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw Error.unreadableConfig(url)
+        }
+        guard let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw Error.unreadableConfig(url)
+        }
+        return parsed
+    }
+
+    /// True when every `events` key already has exactly one LilAgents command
+    /// matching the desired quoted form, timeout 10, and matcher. Unknown
+    /// shapes and stale/duplicate/wrong-matcher forwarder entries force a
+    /// rewrite — and so does a pre-rename entry, which is counted as ours here
+    /// but can never equal the desired (new-path) command.
+    private static func hasCorrectLilAgentsEntries(
+        _ hooks: [String: Any],
+        events: [String],
+        tool: String,
+        matcher: String
+    ) -> Bool {
+        for event in events {
+            // Missing key → we still need to add our entry. Unknown shape →
+            // install will leave it alone, so it must not poison skip-write.
+            if hooks[event] == nil { return false }
+            guard let groups = hooks[event] as? [[String: Any]] else { continue }
+            let desired = command(for: tool, event: event)
+            var ours: [[String: Any]] = []
+            var matchers: [String] = []
+            for group in groups {
+                let entries = (group["hooks"] as? [[String: Any]] ?? []).filter {
+                    isOurCommand($0["command"] as? String)
+                }
+                if entries.isEmpty { continue }
+                ours.append(contentsOf: entries)
+                matchers.append(group["matcher"] as? String ?? "")
+            }
+            guard ours.count == 1,
+                  matchers == [matcher],
+                  ours[0]["command"] as? String == desired,
+                  ours[0]["timeout"] as? Int == 10
+            else { return false }
+        }
+        return true
+    }
+
+    /// Returns `hooks` with every entry referencing one of our forwarder
+    /// scripts — current or pre-rename — removed, from EVERY event key
+    /// present rather than just the ones in `claudeEvents`/`codexEvents`,
+    /// dropping matcher-groups and then event keys that become empty. Foreign
+    /// hooks are left untouched.
+    ///
+    /// Matching by script path rather than by exact command string is what
+    /// makes uninstall survive the event lists changing. An older build's
+    /// uninstall iterated its own (shorter) list, so a hook a newer build had
+    /// added was invisible to it — while `uninstall()` still deleted the
+    /// forwarder that entry pointed at, leaving the config permanently
+    /// invoking a script that no longer exists. This mirrors the self-healing
+    /// `upsertGroups` already does on the install side.
+    // `internal` (not `private`) so unit tests can exercise the pure prune logic directly.
+    internal static func prunedHooks(_ hooks: [String: Any]) -> [String: Any] {
+        var pruned: [String: Any] = [:]
+        for (event, value) in hooks {
+            // A shape we don't understand is left exactly as found.
+            guard let groups = value as? [[String: Any]] else {
+                pruned[event] = value
+                continue
+            }
+
+            var removedAny = false
+            let kept = groups.compactMap { group -> [String: Any]? in
+                guard var entries = group["hooks"] as? [[String: Any]] else { return group }
+                let before = entries.count
+                entries.removeAll { isOurCommand($0["command"] as? String) }
+                if entries.count != before { removedAny = true }
+                guard !entries.isEmpty else { return nil }
+                var survivor = group
+                survivor["hooks"] = entries
+                return survivor
+            }
+
+            // Drop the key only when it is empty BECAUSE we emptied it. An
+            // already-empty foreign key is somebody else's config, and
+            // deleting it would break the promise that uninstall only ever
+            // removes our own entries.
+            if !kept.isEmpty || !removedAny {
+                pruned[event] = kept
+            }
+        }
+        return pruned
+    }
+}
