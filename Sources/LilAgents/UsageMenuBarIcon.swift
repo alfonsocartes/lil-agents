@@ -2,8 +2,8 @@ import AppKit
 
 /// Namespace for building the status-item label `NSImage`: the attention icon
 /// plus, when usage tracking is enabled, an iStat-Menus-style usage block —
-/// one or two rows, each a small SF Symbol glyph followed by a right-aligned
-/// percentage (weekly % per enabled provider). No
+/// one or two rows, each a small SF Symbol glyph hugged to its percentage
+/// (weekly % per enabled provider). No
 /// gauge here: at menu bar sizes the number IS the gauge — user feedback
 /// confirmed the micro-bar cost width without adding read speed, and the
 /// reclaimed points went into bigger, heavier digits instead (the iStat
@@ -34,7 +34,7 @@ enum UsageMenuBarIcon {
         let symbolName: String
         /// Vendor logomark, preferred over `symbolName` when present.
         var logoImage: NSImage? = nil
-        /// Right-aligned label, e.g. "62%" or "--". Kept as a separate field
+        /// Percent label, e.g. "62%" or "--". Kept as a separate field
         /// (rather than derived from `percent`) so `UsageFormatting` stays
         /// the single source of the "62%"/"--" phrasing.
         let text: String
@@ -66,12 +66,13 @@ enum UsageMenuBarIcon {
     /// non-notched bar.
     private static let blockHeight: CGFloat = 21
 
-    /// Per-mode drawing metrics. Two providers pack as dense stacked cells;
-    /// one provider relaxes into a single larger cell — bigger font, bigger
-    /// glyph, vertically centered — because the density was only ever the
-    /// price of fitting two. Both modes use `.medium` weight (heavier than
-    /// the old 8pt block for bar legibility, lighter than bold so digits
-    /// don't smear at the 2x raster) with monospaced digits.
+    /// Per-mode drawing metrics. Two providers pack as dense stacked cells.
+    /// One provider still owns the full 21pt block (vertically centered) but
+    /// keeps the stacked cell's horizontal metrics — a 12pt single-row
+    /// inflate spent ~7pt of bar on a lone "12%" without making it faster
+    /// to read. Both modes use `.medium` weight (heavier than the old 8pt
+    /// block for bar legibility, lighter than bold so digits don't smear at
+    /// the 2x raster) with monospaced digits.
     private struct Metrics {
         /// Height of one row slot; rows stack top-down inside `blockHeight`.
         let rowHeight: CGFloat
@@ -82,21 +83,25 @@ enum UsageMenuBarIcon {
         /// Point size of the row's percentage text.
         let textPointSize: CGFloat
         /// Gap between the glyph box and its number. Tight (2pt) because the
-        /// glyph HUGS the text: the pair renders as one right-aligned unit
-        /// (see `draw`), so this gap is all the air between them.
+        /// glyph HUGS the text: the pair renders as one unit (see `draw`),
+        /// so this gap is all the air between them.
         let glyphTextSpacing: CGFloat
 
         /// iStat-style dense two-row cell: 10pt digits in 10.5pt rows,
-        /// 9pt glyph in a 10pt box.
+        /// 9pt glyph in a 10pt box. Both modes pack the pair to the
+        /// leading edge so a short percent doesn't open a hole before
+        /// the glyph (or, with the attention dot, between the dot and
+        /// the glyphs). Unused "100%" width sits trailing.
         static let stacked = Metrics(
             rowHeight: blockHeight / 2, glyphSide: 10, glyphPointSize: 9,
             textPointSize: 10, glyphTextSpacing: 2
         )
-        /// Single-provider cell: the row owns the whole 21pt block, so the
-        /// type scales up to match — 12pt digits, 11pt glyph.
+        /// Single-provider cell: same glyph/type/spacing as stacked so a
+        /// lone row is no wider than two — only rowHeight grows, centering
+        /// the pair in the 21pt block.
         static let single = Metrics(
-            rowHeight: blockHeight, glyphSide: 12, glyphPointSize: 11,
-            textPointSize: 12, glyphTextSpacing: 2
+            rowHeight: blockHeight, glyphSide: 10, glyphPointSize: 9,
+            textPointSize: 10, glyphTextSpacing: 2
         )
 
         /// Stacked for two rows, single for one — the row COUNT is the mode.
@@ -112,18 +117,16 @@ enum UsageMenuBarIcon {
             ]
         }
 
-        /// Fixed width of the usage block FOR THIS MODE, independent of the
-        /// actual row contents: glyph box + gap + the width "100%" would
-        /// take in the row font (the worst-case glyph+number pair exactly
-        /// fills the block). Digits changing (7% → 62% → 100%) must never
-        /// resize the status item — a resizing status item visibly jitters
-        /// and can shift every icon to its left — so every image built in a
-        /// given mode uses this same width regardless of what the longest
-        /// row's text actually is; shorter pairs right-align inside it (see
-        /// `draw`). The two MODES have different widths (a 12pt single cell
-        /// is wider than a 10pt stacked one); that's deliberate and safe:
-        /// modes only switch when the user toggles a provider in Settings —
-        /// a state change, not data jitter.
+        /// Fixed width of the usage block, independent of the actual row
+        /// contents: glyph box + gap + the width "100%" would take in the
+        /// row font (the worst-case glyph+number pair exactly fills the
+        /// block). Digits changing (7% → 62% → 100%) must never resize the
+        /// status item — a resizing status item visibly jitters and can
+        /// shift every icon to its left — so every image built in a given
+        /// mode uses this same width regardless of what the longest row's
+        /// text actually is. Both modes share these horizontal metrics, so
+        /// toggling a second provider never changes the item's width either;
+        /// shorter pairs pack to the leading edge inside the slot (see `draw`).
         var fixedWidth: CGFloat {
             let sample = "100%" as NSString
             let width = sample.size(withAttributes: textAttributes(color: .black)).width
@@ -238,15 +241,15 @@ enum UsageMenuBarIcon {
     /// when the tier is non-normal so at normal usage the whole row reads as
     /// quiet monochrome.
     ///
-    /// The glyph+number pair is laid out as ONE right-aligned unit: the text
-    /// hugs the block's trailing edge and the glyph hugs the text's leading
-    /// edge (2pt gap). Anchoring the glyph to the block's LEFT edge instead
-    /// opened a dead gap in the middle for typical 2-digit percents — the
-    /// text right-aligns in a "100%"-sized slot, so the shorter the number,
-    /// the more the pair fell apart. The glyph therefore shifts by a
-    /// digit-width when a value crosses 9→10 or 99→100; that's the number
-    /// changing, not layout jitter — the image's TOTAL width (sized for the
-    /// worst-case pair) never moves, so the status item never resizes.
+    /// The glyph+number pair is laid out as ONE unit (2pt gap), packed to
+    /// the leading edge of the block so a short percent ("12%", "--")
+    /// doesn't open a dead gap before the glyph. Right-aligning the pair
+    /// used to do that — and next to the attention icon the hole sat
+    /// BETWEEN the dot and the usage glyphs. Anchoring the glyph to one
+    /// edge of the block and the text to the other opened a hole in the
+    /// MIDDLE for typical 2-digit percents. The glyph therefore stays
+    /// put; the trailing empty is the reserved "100%" slot. Digits
+    /// changing (7% → 62% → 100%) never resize the status item.
     private static func draw(
         rows: [Row],
         in rect: NSRect,
@@ -268,20 +271,21 @@ enum UsageMenuBarIcon {
             let textColor = urgencyColor(urgency, base: baseColor, darkAppearance: darkAppearance)
                 .withAlphaComponent(alpha)
 
-            // Text first: its measured width decides where the glyph goes.
             let text = row.text as NSString
             let attributes = metrics.textAttributes(color: textColor)
             let textSize = text.size(withAttributes: attributes)
+            let glyphX = rowRect.minX
             let textOrigin = NSPoint(
-                x: rowRect.maxX - textSize.width,
+                x: rowRect.minX + metrics.glyphSide + metrics.glyphTextSpacing,
                 y: rowRect.midY - textSize.height / 2
             )
             text.draw(at: textOrigin, withAttributes: attributes)
 
-            // Glyph anchored to the text's leading edge, not the block's —
-            // see the method doc comment for why.
+            // Glyph hugs the text at the block's leading edge — see the
+            // method doc comment for why. Trailing empty is the reserved
+            // "100%" slot, not a hole before the pair.
             let glyphBox = NSRect(
-                x: textOrigin.x - metrics.glyphTextSpacing - metrics.glyphSide,
+                x: glyphX,
                 y: rowRect.midY - metrics.glyphSide / 2,
                 width: metrics.glyphSide,
                 height: metrics.glyphSide
