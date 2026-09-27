@@ -116,6 +116,21 @@ private let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)   // 2023-11-1
         #expect(keychain.callCount == 0)
     }
 
+    @Test func expiredFileFallsBackToCurrentKeychainToken() async throws {
+        let dir = makeTempDir(); defer { cleanup(dir) }
+        let expiredMs = Int64(fixedNow.timeIntervalSince1970 * 1000) - 1000
+        let fileURL = writeCredentials(claudeCredentialsJSON(accessToken: "old-token", expiresAtMs: expiredMs), in: dir)
+        let keychain = KeychainSpy(returning: claudeCredentialsJSON(accessToken: "current-token"))
+        let transport = TransportSpy([.success(status: 200, body: Data("{}".utf8))])
+        let fetcher = ClaudeUsageFetcher(
+            credentialsFileURL: { fileURL }, keychainRead: keychain.read, transport: transport.handle, now: { fixedNow }
+        )
+
+        _ = try await fetcher.fetchUsage()
+
+        #expect(transport.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer current-token")
+    }
+
     /// A `nil` Keychain result (item absent/unreadable) is cached for the
     /// fetcher's whole lifetime and never retried — defense-in-depth against
     /// hammering `security` every 300s for an item that isn't coming back

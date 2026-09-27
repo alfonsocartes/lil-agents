@@ -199,8 +199,9 @@ final class ClaudeUsageFetcher: UsageProviding, Sendable {
         var expiresAt: Int64?   // epoch-ms
     }
 
-    /// File-first credential read, with a Keychain fallback. Reading the
-    /// file never prompts anything, so it's attempted on every single fetch;
+    /// File-first credential read, with a Keychain fallback when the file is
+    /// missing, invalid, or expired. Reading the file never prompts anything,
+    /// so it's attempted on every single fetch;
     /// the Keychain path shells out to Apple's `security` tool (see
     /// `defaultKeychainRead()`), which passes the item's `apple-tool:`
     /// partition silently and needs no user grant — so a SUCCESSFUL read is
@@ -216,12 +217,23 @@ final class ClaudeUsageFetcher: UsageProviding, Sendable {
     private func credentials() throws -> Credentials {
         if let data = try? Data(contentsOf: credentialsFileURL()),
            let credentials = try? Self.decodeCredentials(data) {
+            if let expiresAt = credentials.expiresAt,
+               Date(timeIntervalSince1970: TimeInterval(expiresAt) / 1000) <= now(),
+               let keychain = keychainCredentials(),
+               keychain.expiresAt.map({ Date(timeIntervalSince1970: TimeInterval($0) / 1000) > now() }) ?? true {
+                return keychain
+            }
             return credentials
         }
-        guard let data = keychainData(), let credentials = try? Self.decodeCredentials(data) else {
+        guard let credentials = keychainCredentials() else {
             throw UsageFetchError.credentialsMissing
         }
         return credentials
+    }
+
+    private func keychainCredentials() -> Credentials? {
+        guard let data = keychainData() else { return nil }
+        return try? Self.decodeCredentials(data)
     }
 
     private func keychainData() -> Data? {
